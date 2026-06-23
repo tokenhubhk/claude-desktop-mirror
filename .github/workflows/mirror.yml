@@ -5,6 +5,9 @@ on:
     - cron: "17 */6 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: write     # keepalive 心跳提交需要写仓库（防 60 天自动停用）
+
 concurrency:
   group: mirror-claude-desktop
   cancel-in-progress: false
@@ -23,6 +26,9 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout (keepalive 需要 git 仓库)
+        uses: actions/checkout@v4
+
       - name: Install curl_cffi
         run: python3 -m pip install --quiet curl_cffi
 
@@ -112,3 +118,24 @@ jobs:
           put "out/SHA256SUMS.txt" "s3://$R2_BUCKET/$PREFIX/latest/checksums" --content-type "text/plain; charset=utf-8"
           put "out/manifest.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
           echo "上传完成"
+
+      - name: Keepalive (防 GitHub 60 天自动停用定时工作流)
+        if: always()
+        run: |
+          set -e
+          LAST=$(git log -1 --format=%ct 2>/dev/null || echo 0)
+          NOW=$(date +%s)
+          AGE=$(( (NOW - LAST) / 86400 ))
+          echo "距上次 commit ${AGE} 天"
+          if [ "$AGE" -ge 25 ]; then
+            mkdir -p .github
+            date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-run.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/last-run.txt
+            git commit -m "chore: keepalive $(date -u +%F)"
+            git push
+            echo "已提交心跳保活"
+          else
+            echo "无需保活(${AGE} < 25 天)"
+          fi

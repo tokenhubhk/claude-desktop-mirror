@@ -1,0 +1,115 @@
+name: mirror-claude-desktop
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: mirror-claude-desktop
+  cancel-in-progress: false
+
+env:
+  PREFIX: claude-desktop
+  WIN_REDIRECT: "https://claude.ai/api/desktop/win32/x64/exe/latest/redirect"
+  MAC_REDIRECT: "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
+  AWS_DEFAULT_REGION: auto
+  AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+  R2_BUCKET: ${{ secrets.R2_BUCKET }}
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install curl_cffi
+        run: python3 -m pip install --quiet curl_cffi
+
+      - name: Probe upstream (impersonate Chrome)
+        id: probe
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, sys
+          from curl_cffi import requests
+          def probe(url):
+              r = requests.get(url, impersonate="chrome", allow_redirects=False, timeout=30)
+              loc = r.headers.get("location")
+              if not loc:
+                  sys.stderr.write(f"probe {url} -> HTTP {r.status_code}, 无 location\n"); sys.exit(1)
+              segs = loc.rstrip("/").split("/")
+              return loc, segs[-2], segs[-1]
+          wl, wv, wf = probe(os.environ["WIN_REDIRECT"])
+          ml, mv, mf = probe(os.environ["MAC_REDIRECT"])
+          for k, v in {"win_url":wl,"mac_url":ml,"win_ver":wv,"mac_ver":mv,"win_file":wf,"mac_file":mf}.items():
+              print(f"{k}={v}")
+          sys.stderr.write(f"probe ok: win {wv} / mac {mv}\n")
+          PY
+
+      - name: Compare with current mirror
+        id: cmp
+        run: |
+          aws s3 cp "s3://$R2_BUCKET/$PREFIX/latest/manifest" /tmp/cur.json --endpoint-url "$R2_ENDPOINT" 2>/dev/null || echo '{}' > /tmp/cur.json
+          CW=$(python3 -c "import json;print(json.load(open('/tmp/cur.json')).get('win_ver',''))" 2>/dev/null || true)
+          CM=$(python3 -c "import json;print(json.load(open('/tmp/cur.json')).get('mac_ver',''))" 2>/dev/null || true)
+          if [ "$CW" = "${{ steps.probe.outputs.win_ver }}" ] && [ "$CM" = "${{ steps.probe.outputs.mac_ver }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "未变 win=$CW mac=$CM"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "变化 win:$CW->${{ steps.probe.outputs.win_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
+          fi
+
+      - name: Download + checksum + manifest
+        if: steps.cmp.outputs.changed == 'true'
+        env:
+          WIN_URL: ${{ steps.probe.outputs.win_url }}
+          MAC_URL: ${{ steps.probe.outputs.mac_url }}
+          WIN_VER: ${{ steps.probe.outputs.win_ver }}
+          MAC_VER: ${{ steps.probe.outputs.mac_ver }}
+          WIN_FILE: ${{ steps.probe.outputs.win_file }}
+          MAC_FILE: ${{ steps.probe.outputs.mac_file }}
+        run: |
+          python3 - <<'PY'
+          import os, hashlib, json, datetime, sys
+          from curl_cffi import requests
+          os.makedirs("out", exist_ok=True)
+          def dl(url, path):
+              with requests.get(url, impersonate="chrome", stream=True, timeout=1800) as r:
+                  if r.status_code != 200:
+                      sys.stderr.write(f"download {url} -> HTTP {r.status_code}\n"); sys.exit(1)
+                  h = hashlib.sha256(); n = 0
+                  with open(path, "wb") as f:
+                      for c in r.iter_content(1<<16):
+                          f.write(c); h.update(c); n += len(c)
+              return h.hexdigest(), n
+          wf, mf = os.environ["WIN_FILE"], os.environ["MAC_FILE"]
+          ws, wn = dl(os.environ["WIN_URL"], f"out/{wf}")
+          ms, mn = dl(os.environ["MAC_URL"], f"out/{mf}")
+          open("out/SHA256SUMS.txt","w").write(f"{ws}  {wf}\n{ms}  {mf}\n")
+          json.dump({
+            "tool":"claude-desktop",
+            "win_ver":os.environ["WIN_VER"],"mac_ver":os.environ["MAC_VER"],
+            "win_file":wf,"mac_file":mf,"win_sha256":ws,"mac_sha256":ms,
+            "win_size":wn,"mac_size":mn,
+            "win_upstream":os.environ["WIN_URL"],"mac_upstream":os.environ["MAC_URL"],
+            "mirrored_at_utc":datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+          }, open("out/manifest.json","w"), indent=2, ensure_ascii=False)
+          sys.stderr.write(f"downloaded win {wn}B / mac {mn}B\n")
+          PY
+
+      - name: Upload to R2
+        if: steps.cmp.outputs.changed == 'true'
+        env:
+          WV: ${{ steps.probe.outputs.win_ver }}
+          MV: ${{ steps.probe.outputs.mac_ver }}
+          WF: ${{ steps.probe.outputs.win_file }}
+          MF: ${{ steps.probe.outputs.mac_file }}
+        run: |
+          set -e
+          put() { aws s3 cp --endpoint-url "$R2_ENDPOINT" "$@"; }
+          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/archive/$WV/$WF"
+          put "out/$MF" "s3://$R2_BUCKET/$PREFIX/archive/$MV/$MF"
+          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win" --content-type application/octet-stream --content-disposition "attachment; filename=\"$WF\""
+          put "out/$MF" "s3://$R2_BUCKET/$PREFIX/latest/mac" --content-type application/octet-stream --content-disposition "attachment; filename=\"$MF\""
+          put "out/SHA256SUMS.txt" "s3://$R2_BUCKET/$PREFIX/latest/checksums" --content-type "text/plain; charset=utf-8"
+          put "out/manifest.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
+          echo "上传完成"

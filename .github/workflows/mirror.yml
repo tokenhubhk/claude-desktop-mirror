@@ -119,6 +119,28 @@ jobs:
           put "out/manifest.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
           echo "上传完成"
 
+      - name: Prune old archive (只留最近 N 个版本，与出版频率无关，存储恒定)
+        if: steps.cmp.outputs.changed == 'true'
+        env:
+          KEEP: "12"     # 保留最近 12 个版本（~6.6GB，稳在 10GB 免费内）；想多留改这里
+        run: |
+          set -e
+          # 列出 archive/ 下的版本目录前缀，按版本号语义排序(1.9 < 1.14)，删掉最新 KEEP 个之外的旧版本
+          vers=$(aws s3 ls "s3://$R2_BUCKET/$PREFIX/archive/" --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
+                 | awk '/PRE/{gsub(/\/$/,"",$2); print $2}' | sort -V || true)
+          total=$(printf '%s\n' "$vers" | grep -c . || true)
+          drop=$(( total - KEEP ))
+          echo "archive 共 $total 版，保留最近 $KEEP，待删 $drop"
+          if [ "$drop" -gt 0 ]; then
+            printf '%s\n' "$vers" | head -n "$drop" | while read -r v; do
+              [ -n "$v" ] || continue
+              echo "删除旧版本 archive/$v/"
+              aws s3 rm "s3://$R2_BUCKET/$PREFIX/archive/$v/" --recursive --endpoint-url "$R2_ENDPOINT"
+            done
+          else
+            echo "无需清理（版本数未超 $KEEP）"
+          fi
+
       - name: Keepalive (防 GitHub 60 天自动停用定时工作流)
         if: always()
         run: |
@@ -134,7 +156,7 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/last-run.txt
             git commit -m "chore: keepalive $(date -u +%F)"
-            git push
+            git push origin "HEAD:${{ github.ref_name }}"
             echo "已提交心跳保活"
           else
             echo "无需保活(${AGE} < 25 天)"

@@ -21,13 +21,13 @@ env:
   PREFIX: claude-desktop
   WIN_REDIRECT: "https://claude.ai/api/desktop/win32/x64/exe/latest/redirect"
   MAC_REDIRECT: "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
-  INST_KEEP: "12"          # 安装包 archive 保留最近 12 版
+  INST_KEEP: "6"          # 安装包 archive 保留最近 6 版
   # —— Code 二进制(claude-code) ——
   CC_PREFIX: claude-code
   NPM_META: "https://registry.npmjs.org/@anthropic-ai/claude-code-win32-x64"
   REL_BASE: "https://downloads.claude.ai/claude-code-releases"
-  CC_KEEP_RECENT: "6"      # 自动模式镜像最近 6 个版本(覆盖 CD 可能滞后的版本)
-  CC_KEEP_ARCHIVE: "12"    # R2 保留最近 12 个版本(~12×52MB≈620MB)
+  CC_KEEP_RECENT: "2"      # 自动模式镜像最近 2 个版本(覆盖 CD 可能滞后的版本)
+  CC_KEEP_ARCHIVE: "6"    # R2 保留最近 6 个版本(~12×52MB≈620MB)
   # —— 共享 ——
   MANIFEST: "manifest.json"   # 仓库内统一状态(安装包版本 + claude-code 已镜像列表)，双 compare 基准
   AWS_DEFAULT_REGION: auto

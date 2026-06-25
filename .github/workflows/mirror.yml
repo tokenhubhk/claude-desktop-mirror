@@ -3,19 +3,33 @@ name: mirror-claude-desktop
 on:
   schedule:
     - cron: "17 */6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      cc_versions:
+        description: "(可选) 手动指定要镜像的 claude-code 版本，逗号分隔；留空=自动取 npm 最近 N 个"
+        required: false
 
 permissions:
-  contents: write     # keepalive 心跳提交需要写仓库（防 60 天自动停用）
+  contents: write          # 回写 manifest.json(双 compare 基准) + keepalive 都要写
 
 concurrency:
   group: mirror-claude-desktop
   cancel-in-progress: false
 
 env:
+  # —— 安装包(installer) ——
   PREFIX: claude-desktop
   WIN_REDIRECT: "https://claude.ai/api/desktop/win32/x64/exe/latest/redirect"
   MAC_REDIRECT: "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
+  INST_KEEP: "12"          # 安装包 archive 保留最近 12 版
+  # —— Code 二进制(claude-code) ——
+  CC_PREFIX: claude-code
+  NPM_META: "https://registry.npmjs.org/@anthropic-ai/claude-code-win32-x64"
+  REL_BASE: "https://downloads.claude.ai/claude-code-releases"
+  CC_KEEP_RECENT: "6"      # 自动模式镜像最近 6 个版本(覆盖 CD 可能滞后的版本)
+  CC_KEEP_ARCHIVE: "12"    # R2 保留最近 12 个版本(~12×52MB≈620MB)
+  # —— 共享 ——
+  MANIFEST: "manifest.json"   # 仓库内统一状态(安装包版本 + claude-code 已镜像列表)，双 compare 基准
   AWS_DEFAULT_REGION: auto
   AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -26,25 +40,41 @@ jobs:
   mirror:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (keepalive 需要 git 仓库)
+      - name: Checkout (带仓库内 manifest 作对比基准 + keepalive 需要 git)
         uses: actions/checkout@v4
 
       - name: Install curl_cffi
         run: python3 -m pip install --quiet curl_cffi
 
-      - name: Probe upstream (impersonate Chrome)
+      # ========================= A. 安装包(installer) =========================
+      # 轻量版本探测：只跟 307 重定向拿版本号 + 文件名，不下载安装包本体。
+      - name: Probe installer (impersonate Chrome, 带重试)
         id: probe
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, sys
+          import os, sys, time
           from curl_cffi import requests
+          PROFILES = ["chrome", "safari", "edge", "chrome124", "chrome120", "chrome116"]
+          ATTEMPTS = 6
+          HEADERS = {"Accept-Language": "en-US,en;q=0.9"}
           def probe(url):
-              r = requests.get(url, impersonate="chrome", allow_redirects=False, timeout=30)
-              loc = r.headers.get("location")
-              if not loc:
-                  sys.stderr.write(f"probe {url} -> HTTP {r.status_code}, 无 location\n"); sys.exit(1)
-              segs = loc.rstrip("/").split("/")
-              return loc, segs[-2], segs[-1]
+              last = "未知错误"
+              for i in range(ATTEMPTS):
+                  prof = PROFILES[i % len(PROFILES)]
+                  try:
+                      r = requests.get(url, impersonate=prof, allow_redirects=False,
+                                       timeout=30, headers=HEADERS)
+                      loc = r.headers.get("location")
+                      if loc:
+                          segs = loc.rstrip("/").split("/")
+                          return loc, segs[-2], segs[-1]
+                      last = f"HTTP {r.status_code} 无 location (impersonate={prof})"
+                  except Exception as e:
+                      last = f"{type(e).__name__}: {e} (impersonate={prof})"
+                  sys.stderr.write(f"probe {url} 第 {i+1}/{ATTEMPTS} 次失败：{last}\n")
+                  if i < ATTEMPTS - 1:
+                      time.sleep(min(2 ** i, 30))
+              sys.exit(f"probe {url} 重试 {ATTEMPTS} 次仍失败：{last}")
           wl, wv, wf = probe(os.environ["WIN_REDIRECT"])
           ml, mv, mf = probe(os.environ["MAC_REDIRECT"])
           for k, v in {"win_url":wl,"mac_url":ml,"win_ver":wv,"mac_ver":mv,"win_file":wf,"mac_file":mf}.items():
@@ -52,20 +82,21 @@ jobs:
           sys.stderr.write(f"probe ok: win {wv} / mac {mv}\n")
           PY
 
-      - name: Compare with current mirror
+      # 轻量对比：只读仓库内 manifest.json(上次记录的版本号)，不读 R2。版本一致就安装包整段 no-op。
+      - name: Compare installer (轻量，不读 R2)
         id: cmp
         run: |
-          aws s3 cp "s3://$R2_BUCKET/$PREFIX/latest/manifest" /tmp/cur.json --endpoint-url "$R2_ENDPOINT" 2>/dev/null || echo '{}' > /tmp/cur.json
-          CW=$(python3 -c "import json;print(json.load(open('/tmp/cur.json')).get('win_ver',''))" 2>/dev/null || true)
-          CM=$(python3 -c "import json;print(json.load(open('/tmp/cur.json')).get('mac_ver',''))" 2>/dev/null || true)
+          CW=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('win_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
+          CM=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('mac_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
           if [ "$CW" = "${{ steps.probe.outputs.win_ver }}" ] && [ "$CM" = "${{ steps.probe.outputs.mac_ver }}" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "未变 win=$CW mac=$CM"
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "安装包版本未变 win=$CW mac=$CM（跳过下载/上传）"
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "变化 win:$CW->${{ steps.probe.outputs.win_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "安装包有更新 win:$CW->${{ steps.probe.outputs.win_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
           fi
 
-      - name: Download + checksum + manifest
-        if: steps.cmp.outputs.changed == 'true'
+      # 下载 + 校验：HTTP 200 且体积 ≥ 50MB 才算有效；失败即退出 → 后续 success() 步跳过，绝不把半截包覆盖 latest。
+      - name: Download installer + checksum + manifest
+        if: success() && steps.cmp.outputs.changed == 'true'
         env:
           WIN_URL: ${{ steps.probe.outputs.win_url }}
           MAC_URL: ${{ steps.probe.outputs.mac_url }}
@@ -75,17 +106,28 @@ jobs:
           MAC_FILE: ${{ steps.probe.outputs.mac_file }}
         run: |
           python3 - <<'PY'
-          import os, hashlib, json, datetime, sys
+          import os, hashlib, json, datetime, sys, time
           from curl_cffi import requests
+          PROFILES = ["chrome", "safari", "edge", "chrome124", "chrome120", "chrome116"]
+          ATTEMPTS = 6
+          MIN_BYTES = 50 * 1024 * 1024
           os.makedirs("out", exist_ok=True)
           def dl(url, path):
-              r = requests.get(url, impersonate="chrome", timeout=1800)
-              if r.status_code != 200:
-                  sys.stderr.write(f"download {url} -> HTTP {r.status_code}\n"); sys.exit(1)
-              data = r.content
-              with open(path, "wb") as f:
-                  f.write(data)
-              return hashlib.sha256(data).hexdigest(), len(data)
+              last = "未知错误"
+              for i in range(ATTEMPTS):
+                  prof = PROFILES[i % len(PROFILES)]
+                  try:
+                      r = requests.get(url, impersonate=prof, timeout=900)
+                      n = len(r.content)
+                      if r.status_code == 200 and n >= MIN_BYTES:
+                          with open(path, "wb") as f: f.write(r.content)
+                          return hashlib.sha256(r.content).hexdigest(), n
+                      last = f"HTTP {r.status_code}, {n}B (impersonate={prof})"
+                  except Exception as e:
+                      last = f"{type(e).__name__}: {e} (impersonate={prof})"
+                  sys.stderr.write(f"download {url} 第 {i+1}/{ATTEMPTS} 次失败：{last}\n")
+                  if i < ATTEMPTS - 1: time.sleep(min(2 ** i, 30))
+              sys.exit(f"download {url} 重试 {ATTEMPTS} 次仍失败：{last}")
           wf, mf = os.environ["WIN_FILE"], os.environ["MAC_FILE"]
           ws, wn = dl(os.environ["WIN_URL"], f"out/{wf}")
           ms, mn = dl(os.environ["MAC_URL"], f"out/{mf}")
@@ -97,12 +139,12 @@ jobs:
             "win_size":wn,"mac_size":mn,
             "win_upstream":os.environ["WIN_URL"],"mac_upstream":os.environ["MAC_URL"],
             "mirrored_at_utc":datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-          }, open("out/manifest.json","w"), indent=2, ensure_ascii=False)
+          }, open("out/installer.json","w"), indent=2, ensure_ascii=False)
           sys.stderr.write(f"downloaded win {wn}B / mac {mn}B\n")
           PY
 
-      - name: Upload to R2
-        if: steps.cmp.outputs.changed == 'true'
+      - name: Upload installer to R2
+        if: success() && steps.cmp.outputs.changed == 'true'
         env:
           WV: ${{ steps.probe.outputs.win_ver }}
           MV: ${{ steps.probe.outputs.mac_ver }}
@@ -116,48 +158,185 @@ jobs:
           put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win" --content-type application/octet-stream --content-disposition "attachment; filename=\"$WF\""
           put "out/$MF" "s3://$R2_BUCKET/$PREFIX/latest/mac" --content-type application/octet-stream --content-disposition "attachment; filename=\"$MF\""
           put "out/SHA256SUMS.txt" "s3://$R2_BUCKET/$PREFIX/latest/checksums" --content-type "text/plain; charset=utf-8"
-          put "out/manifest.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
-          echo "上传完成"
+          # manifest 最后传：consumer/审计靠它，放最后可保证中途失败时它仍指向旧版。
+          put "out/installer.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
+          echo "安装包上传完成"
 
-      - name: Prune old archive (只留最近 N 个版本，与出版频率无关，存储恒定)
-        if: steps.cmp.outputs.changed == 'true'
+      # ===================== B. Code 二进制(claude-code) =====================
+      # 解析目标版本(npm) + 用仓库内 manifest 的 claude_code_mirrored 轻量过滤出"还没镜像的新版本"(零 R2 读)。
+      - name: Resolve claude-code versions & diff
+        id: ccplan
         env:
-          KEEP: "12"     # 保留最近 12 个版本（~6.6GB，稳在 10GB 免费内）；想多留改这里
+          INPUT_VERSIONS: ${{ github.event.inputs.cc_versions }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, sys, json, time, re
+          from curl_cffi import requests
+          PROFILES = ["chrome","safari","edge","chrome124","chrome120","chrome116"]
+          def get(url):
+              last="未知错误"
+              for i in range(6):
+                  prof=PROFILES[i%len(PROFILES)]
+                  try:
+                      r=requests.get(url, impersonate=prof, timeout=30,
+                                     headers={"Accept-Language":"en-US,en;q=0.9"})
+                      if r.status_code==200: return r
+                      last=f"HTTP {r.status_code} (impersonate={prof})"
+                  except Exception as e:
+                      last=f"{type(e).__name__}: {e} (impersonate={prof})"
+                  sys.stderr.write(f"get {url} 第 {i+1}/6 次失败：{last}\n")
+                  if i<5: time.sleep(min(2**i,30))
+              sys.exit(f"get {url} 重试 6 次仍失败：{last}")
+          def vkey(v): return [int(x) for x in re.findall(r'\d+', v)]
+          inp=os.environ.get("INPUT_VERSIONS","").strip()
+          if inp:
+              want=sorted({v.strip() for v in inp.split(",") if v.strip()}, key=vkey); latest=want[-1]
+          else:
+              meta=get(os.environ["NPM_META"]).json()
+              latest=meta["dist-tags"]["latest"]
+              want=sorted(meta["versions"].keys(), key=vkey)[-int(os.environ["CC_KEEP_RECENT"]):]
+          done=set()
+          mp=os.environ["MANIFEST"]
+          if os.path.exists(mp):
+              try: done=set(json.load(open(mp)).get("claude_code_mirrored",[]))
+              except Exception: pass
+          todo=[v for v in want if v not in done]
+          print(f"cc_latest={latest}")
+          print("cc_todo="+",".join(todo))
+          sys.stderr.write(f"cc want={want} 已镜像={sorted(done)} 待镜像={todo}\n")
+          PY
+
+      # 对每个新版本：curl_cffi 下 .zst(校验 ≥20MB 挡错误页) + 官方 manifest → 算 zst_sha256/读 exe_sha256 → 逐字节传 R2。
+      - name: Mirror claude-code new versions
+        if: steps.ccplan.outputs.cc_todo != ''
+        id: ccmirror
+        env:
+          TODO: ${{ steps.ccplan.outputs.cc_todo }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, sys, json, time, hashlib, subprocess
+          from curl_cffi import requests
+          PROFILES=["chrome","safari","edge","chrome124","chrome120","chrome116"]
+          REL=os.environ["REL_BASE"]; B=os.environ["R2_BUCKET"]; EP=os.environ["R2_ENDPOINT"]; PFX=os.environ["CC_PREFIX"]
+          MIN=20*1024*1024
+          def dl(url, check_size):
+              last="未知错误"
+              for i in range(6):
+                  prof=PROFILES[i%len(PROFILES)]
+                  try:
+                      r=requests.get(url, impersonate=prof, timeout=900)
+                      n=len(r.content)
+                      if r.status_code==200 and (not check_size or n>=MIN): return r.content
+                      last=f"HTTP {r.status_code}, {n}B (impersonate={prof})"
+                  except Exception as e:
+                      last=f"{type(e).__name__}: {e} (impersonate={prof})"
+                  sys.stderr.write(f"download {url} 第 {i+1}/6 次失败：{last}\n")
+                  if i<5: time.sleep(min(2**i,30))
+              sys.exit(f"download {url} 重试 6 次仍失败：{last}")
+          # stdout=DEVNULL：本步 stdout 已重定向到 $GITHUB_OUTPUT，aws s3 cp 输出不能污染它。
+          def s3(*a): subprocess.run(["aws","s3","--endpoint-url",EP,*a], check=True, stdout=subprocess.DEVNULL)
+          done=[]
+          for v in os.environ["TODO"].split(","):
+              if not v: continue
+              sys.stderr.write(f"=== 镜像 claude-code {v} ===\n")
+              zst=dl(f"{REL}/{v}/win32-x64/claude.exe.zst", True)
+              man=json.loads(dl(f"{REL}/{v}/manifest.json", False))
+              zst_sha=hashlib.sha256(zst).hexdigest()
+              exe_sha=man["platforms"]["win32-x64"]["checksum"]
+              os.makedirs("cc", exist_ok=True)
+              open("cc/claude.exe.zst","wb").write(zst)
+              json.dump({"version":v,"zst_sha256":zst_sha,"exe_sha256":exe_sha,"zst_size":len(zst)},
+                        open("cc/meta.json","w"), ensure_ascii=False)
+              open("cc/manifest.json","w").write(json.dumps(man))
+              s3("cp","cc/claude.exe.zst", f"s3://{B}/{PFX}/{v}/win/claude.exe.zst", "--content-type","application/zstd")
+              s3("cp","cc/meta.json",      f"s3://{B}/{PFX}/{v}/meta.json",          "--content-type","application/json; charset=utf-8")
+              s3("cp","cc/manifest.json",  f"s3://{B}/{PFX}/{v}/manifest.json",      "--content-type","application/json; charset=utf-8")
+              done.append(v)
+              sys.stderr.write(f"已镜像 claude-code {v}：zst={len(zst)}B sha={zst_sha[:12]}…\n")
+          print("cc_mirrored="+",".join(done))
+          PY
+
+      # ===== C. 合并记录(单次 commit) + 各自 latest/prune + robust push =====
+      - name: Merge-record + cc latest + prune + push
+        if: always() && (steps.cmp.outputs.changed == 'true' || steps.ccplan.outputs.cc_latest != '')
+        env:
+          INST_CHANGED: ${{ steps.cmp.outputs.changed }}
+          WV: ${{ steps.probe.outputs.win_ver }}
+          MV: ${{ steps.probe.outputs.mac_ver }}
+          CC_LATEST: ${{ steps.ccplan.outputs.cc_latest }}
+          CC_MIRRORED: ${{ steps.ccmirror.outputs.cc_mirrored }}
         run: |
           set -e
-          # 列出 archive/ 下的版本目录前缀，按版本号语义排序(1.9 < 1.14)，删掉最新 KEEP 个之外的旧版本
-          vers=$(aws s3 ls "s3://$R2_BUCKET/$PREFIX/archive/" --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
-                 | awk '/PRE/{gsub(/\/$/,"",$2); print $2}' | sort -V || true)
-          total=$(printf '%s\n' "$vers" | grep -c . || true)
-          drop=$(( total - KEEP ))
-          echo "archive 共 $total 版，保留最近 $KEEP，待删 $drop"
-          if [ "$drop" -gt 0 ]; then
-            printf '%s\n' "$vers" | head -n "$drop" | while read -r v; do
-              [ -n "$v" ] || continue
-              echo "删除旧版本 archive/$v/"
-              aws s3 rm "s3://$R2_BUCKET/$PREFIX/archive/$v/" --recursive --endpoint-url "$R2_ENDPOINT"
-            done
-          else
-            echo "无需清理（版本数未超 $KEEP）"
+
+          # 1) claude-code latest.json(R2)：全新机器无日志意图时 qopad 的版本回退
+          if [ -n "$CC_LATEST" ]; then
+            printf '{"version":"%s","mirrored_at":"%s"}\n' "$CC_LATEST" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/cc-latest.json
+            aws s3 cp /tmp/cc-latest.json "s3://$R2_BUCKET/$CC_PREFIX/latest.json" --endpoint-url "$R2_ENDPOINT" \
+              --content-type 'application/json; charset=utf-8' --cache-control 'public, max-age=300'
           fi
 
-      - name: Keepalive (防 GitHub 60 天自动停用定时工作流)
+          # 2) 合并写仓库 manifest.json：保留旧字段；安装包字段用本次 out/installer.json(若有)覆盖；更新 claude-code 字段。
+          python3 - <<'PY'
+          import json, os, re
+          mp=os.environ["MANIFEST"]; m={}
+          if os.path.exists(mp):
+              try: m=json.load(open(mp))
+              except Exception: pass
+          op="out/installer.json"
+          if os.path.exists(op):
+              m.update(json.load(open(op)))           # 覆盖 win_ver/mac_ver/sha256/... 安装包字段
+          cl=os.environ.get("CC_LATEST","")
+          if cl: m["claude_code_latest"]=cl
+          keep=int(os.environ["CC_KEEP_ARCHIVE"])
+          mir=set(m.get("claude_code_mirrored",[])) | {v for v in os.environ.get("CC_MIRRORED","").split(",") if v}
+          if mir:
+              m["claude_code_mirrored"]=sorted(mir, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]
+          json.dump(m, open(mp,"w"), indent=2, ensure_ascii=False)
+          PY
+
+          # 3) prune R2：安装包 archive(claude-desktop/archive/<ver>) + claude-code(claude-code/<ver>)，各留最近 N。
+          prune() {  # $1=ls 前缀  $2=保留个数  $3=删除前缀
+            local vers total drop
+            vers=$(aws s3 ls "s3://$R2_BUCKET/$1" --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
+                   | awk '/PRE/{gsub(/\/$/,"",$2); print $2}' | grep -E '^[0-9]+\.' | sort -V || true)
+            total=$(printf '%s\n' "$vers" | grep -c . || true); drop=$(( total - $2 ))
+            [ "$drop" -le 0 ] && return 0
+            printf '%s\n' "$vers" | head -n "$drop" | while read -r v; do
+              [ -n "$v" ] && echo "删除旧版本 $3$v/" && aws s3 rm "s3://$R2_BUCKET/$3$v/" --recursive --endpoint-url "$R2_ENDPOINT"
+            done
+          }
+          prune "$PREFIX/archive/" "$INST_KEEP"   "$PREFIX/archive/"
+          prune "$CC_PREFIX/"      "$CC_KEEP_ARCHIVE" "$CC_PREFIX/"
+
+          # 4) 单次 commit + robust push（同 group 不会并发；fetch+rebase 重试仅兜底，绝不强推）。
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$MANIFEST"
+          if git diff --cached --quiet; then
+            echo "manifest.json 无变化，跳过提交"
+          else
+            git commit -m "chore: mirror desktop win ${WV} / mac ${MV} + claude-code ${CC_LATEST}"
+            for i in 1 2 3 4 5; do
+              git push origin "HEAD:${{ github.ref_name }}" && { echo pushed; break; }
+              echo "push 被拒(第 $i 次)，fetch+rebase 重试"
+              git fetch origin "${{ github.ref_name }}"
+              git rebase "origin/${{ github.ref_name }}" || { git rebase --abort; exit 1; }
+              [ "$i" -lt 5 ] && sleep $((i*2))
+            done
+          fi
+
+      - name: Keepalive (防 GitHub 60 天自动停用)
         if: always()
         run: |
           set -e
-          LAST=$(git log -1 --format=%ct 2>/dev/null || echo 0)
-          NOW=$(date +%s)
-          AGE=$(( (NOW - LAST) / 86400 ))
-          echo "距上次 commit ${AGE} 天"
+          LAST=$(git log -1 --format=%ct 2>/dev/null || echo 0); NOW=$(date +%s)
+          AGE=$(( (NOW - LAST) / 86400 )); echo "距上次 commit ${AGE} 天"
           if [ "$AGE" -ge 25 ]; then
-            mkdir -p .github
-            date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-run.txt
+            mkdir -p .github; date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-run.txt
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/last-run.txt
             git commit -m "chore: keepalive $(date -u +%F)"
             git push origin "HEAD:${{ github.ref_name }}"
             echo "已提交心跳保活"
-          else
-            echo "无需保活(${AGE} < 25 天)"
-          fi
+          else echo "无需保活(${AGE} < 25 天)"; fi

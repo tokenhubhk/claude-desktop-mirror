@@ -464,33 +464,59 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p out
-          echo "预构建 store-link(Release)…"; dotnet build -c Release scripts/store-link 1>/dev/null
+          # ── 前置检查：store-link(.NET FE3 解析器)必须与 mirror.yml 一起拷进镜像仓库根 ──
+          if [ ! -f scripts/store-link/StoreLink.csproj ] || [ ! -f scripts/store-link/Program.cs ]; then
+            echo "::error title=缺少 store-link::未找到 scripts/store-link/(StoreLink.csproj + Program.cs)。请把 qopad 仓库 docs/mirror-repo/scripts/store-link/ 整个目录也拷进本镜像仓库根——只拷 mirror.yml 不够，Codex Windows FE3 解析依赖这个 .NET 项目。"
+            echo "当前 scripts/ 目录内容："; ls -la scripts 2>/dev/null || echo "(无 scripts 目录)"
+            exit 1
+          fi
+          # ── 预构建 store-link：不隐藏输出，编译失败可在下方看到具体 dotnet 报错 ──
+          echo "== 预构建 store-link(.NET FE3 解析器, Release) =="
+          if ! dotnet build -c Release scripts/store-link; then
+            echo "::error title=store-link 编译失败::.NET FE3 解析器(scripts/store-link)编译失败，具体报错见上方 dotnet 输出。常见：.NET SDK 版本不符(csproj 目标 net8.0，见 setup-dotnet dotnet-version)、Program.cs 被编辑器改坏。"
+            exit 1
+          fi
+          echo "== store-link 编译成功，开始 FE3 解析（每架构最多 $FE3_ATTEMPTS 次，失败会打印 store-link 完整 stderr）=="
           resolve_dl(){   # $1=arch $2=目标文件；成功=0(写 .moniker) 失败=1
-            local arch="$1" target="$2" a line moniker url sz
+            local arch="$1" target="$2" a line moniker url sz w
             for a in $(seq 1 "$FE3_ATTEMPTS"); do
+              echo "-- [$arch] FE3 解析尝试 $a/$FE3_ATTEMPTS --"
               line="$(dotnet run --no-build -c Release --project scripts/store-link -- "$PRODUCT_ID" "$arch" 2>sl.err | grep -E '^OpenAI\.Codex_' | head -1 || true)"
-              if [ -z "$line" ]; then echo "[$arch] FE3 第 $a/$FE3_ATTEMPTS 次未解析到链接" >&2; tail -3 sl.err >&2 || true; sleep $(( a<6 ? a*8 : 48 )); continue; fi
+              if [ -z "$line" ]; then
+                echo "[$arch] 未解析到下载链接；store-link stderr（完整）："; cat sl.err >&2 || true
+                if [ "$a" -lt "$FE3_ATTEMPTS" ]; then w=$(( a<6 ? a*8 : 48 )); echo "[$arch] ${w}s 后重试"; sleep "$w"; fi
+                continue
+              fi
               moniker="$(printf '%s' "$line" | cut -f1)"; url="$(printf '%s' "$line" | cut -f2-)"
               case "$moniker" in
                 "${PUBLISHER}_${WIN_VER}_${arch}__"*) : ;;
-                *) echo "[$arch] moniker 版本不符(期望 ${PUBLISHER}_${WIN_VER}_${arch}__*，得 $moniker)→store 可能刚更新，重试" >&2; sleep 20; continue ;;
+                *) echo "[$arch] moniker 版本不符(期望 ${PUBLISHER}_${WIN_VER}_${arch}__*，得 $moniker) → store 可能刚更新，20s 后重试" >&2; sleep 20; continue ;;
               esac
-              echo "[$arch] 下载 $moniker (${url%%\?*}?<signed>)"
+              echo "[$arch] 解析成功 moniker=$moniker，下载中(${url%%\?*}?<signed>)"
               if curl -fSL -m 2400 --retry 3 --retry-delay 8 --retry-all-errors -A "Mozilla/5.0" "$url" -o "$target"; then
                 sz=$(stat -c%s "$target" 2>/dev/null || echo 0)
-                if [ "$sz" -ge "$WIN_MIN_BYTES" ]; then echo "$moniker" > "$target.moniker"; echo "[$arch] OK $sz B"; return 0; fi
-                echo "[$arch] 下载过小 $sz < $WIN_MIN_BYTES → 重解析" >&2
-              else echo "[$arch] 下载失败(URL 可能过期)→ 重解析" >&2; fi
-              rm -f "$target"; sleep $(( a*8 ))
+                if [ "$sz" -ge "$WIN_MIN_BYTES" ]; then echo "$moniker" > "$target.moniker"; echo "[$arch] ✓ 下载完成 $sz B"; return 0; fi
+                echo "[$arch] 下载件过小 $sz < $WIN_MIN_BYTES(疑错误页/URL 过期) → 重解析" >&2
+              else echo "[$arch] 下载失败(URL 可能过期) → 重解析" >&2; fi
+              rm -f "$target"; if [ "$a" -lt "$FE3_ATTEMPTS" ]; then sleep $(( a*8 )); fi
             done
             return 1
           }
-          resolve_dl x64 out/Codex-Windows-x64.msix || { echo "x64(必需) 解析/下载失败" >&2; exit 1; }
-          if resolve_dl arm64 out/Codex-Windows-arm64.msix; then echo "arm64 就绪"; else echo "::warning::arm64 本轮失败，保留 R2 旧 arm64"; fi
+          # x64 必需：失败打印明确 ::error:: 并标 job 红(可见)，但**不立即 exit**——让下方 mac 下载 + 上传就绪产物照跑(if: always())。
+          win_failed=""
+          if resolve_dl x64 out/Codex-Windows-x64.msix; then
+            echo "win-x64 就绪"
+          else
+            echo "::error title=Codex win-x64 FE3 失败::x64(必需)经 $FE3_ATTEMPTS 次仍未解析/下载成功，逐次原因见上方各次 store-link stderr。可能：微软商店限流(下轮 12h 自动重试) / 商店未上架 x64 / 网络。本轮 Windows 不更新，mac 仍会镜像。"
+            win_failed=1
+          fi
+          if resolve_dl arm64 out/Codex-Windows-arm64.msix; then echo "win-arm64 就绪"; else echo "::warning title=Codex win-arm64 FE3 失败::arm64 本轮未成功(逐次原因见上)，保留 R2 旧 arm64。"; fi
+          # x64 失败 → 末尾 exit 1 让 job 标红(可见)；mac/upload 已 if:always() 不受影响，仍会镜像 mac + 传就绪产物。
+          if [ -n "$win_failed" ]; then echo "::error::本轮 Codex win-x64 未镜像(详见上方日志)，job 标红以便留意；mac 与就绪产物已照常处理。"; exit 1; fi
 
       # ③ 下载 macOS dmg(arm64 + x64)：oaistatic 官方 latest 稳定别名。
       - name: Download macOS dmg
-        if: steps.probe.outputs.changed == 'true'
+        if: always() && steps.probe.outputs.changed == 'true'   # win FE3 失败也照镜像 mac(不被拖垮)
         run: |
           set -uo pipefail
           mkdir -p out
@@ -501,7 +527,7 @@ jobs:
       # ④ 上传 R2：先归档 → checksums/manifest/latest.json → latest 短链最后(避免 latest 半更新)。
       #    只上传"本轮成功就绪"的产物；失败的架构保留 R2 旧 latest 不动。
       - name: Upload ready artifacts to R2
-        if: steps.probe.outputs.changed == 'true'
+        if: always() && steps.probe.outputs.changed == 'true'   # 只传本轮就绪产物(win FE3 失败则只传 mac)
         env:
           V: ${{ steps.probe.outputs.win_ver }}
           CODEX_VER: ${{ steps.probe.outputs.codex_ver }}

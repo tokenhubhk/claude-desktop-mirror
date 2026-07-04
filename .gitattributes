@@ -1,0 +1,8 @@
+# 强制 LF：workflow 的 bash `run:` 步骤在 ubuntu runner 执行，CRLF(\r) 会让 shell 报错。
+# 拷进镜像仓库根后即保证 yml/脚本恒 LF，与 Windows 编辑无关。
+* text=auto eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.cs     text eol=lf
+*.csproj text eol=lf
+*.sh     text eol=lf

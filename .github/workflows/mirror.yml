@@ -54,14 +54,14 @@ jobs:
       WIN_REDIRECT: "https://claude.ai/api/desktop/win32/x64/msix/latest/redirect"
       WIN_ARM64_REDIRECT: "https://claude.ai/api/desktop/win32/arm64/msix/latest/redirect"
       MAC_REDIRECT: "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
-      INST_KEEP: "12"                 # 安装包 archive 保留最近 12 版
+      INST_KEEP: "2"                  # 安装包 archive 保留最近 2 版(每版 ~772MB；qopad 只用 latest/*，archive 仅回滚。原 12 是 R2 6GB 膨胀主因)
       WIN_MIN_BYTES: "60000000"       # MSIX ≥ ~60MB 才算有效(挡错误页/半截包)
       MAC_MIN_BYTES: "60000000"
       CC_PREFIX: claude-code
       NPM_META: "https://registry.npmjs.org/@anthropic-ai/claude-code-win32-x64"
       REL_BASE: "https://downloads.claude.ai/claude-code-releases"
-      CC_KEEP_RECENT: "12"
-      CC_KEEP_ARCHIVE: "16"
+      CC_KEEP_RECENT: "2"         # claude-code 镜像最近 2 个 npm 版本(每版 ~52MB)；CD pin 额外恒被单独保护(不受此限)
+      CC_KEEP_ARCHIVE: "2"        # R2 claude-code 保留 2 版(须 ≥ CC_KEEP_RECENT)；CD pin 另受保护，实际最多 2+pin
       MANIFEST: "manifest.json"
     steps:
       - name: Checkout (仓库内 manifest 作对比基准 + keepalive 需要 git)
@@ -112,17 +112,20 @@ jobs:
           sys.stderr.write(f"probe ok: win-x64 {wv} / win-arm64 {av or '(跳过)'} / mac {mv}\n")
           PY
 
-      - name: Compare installer (轻量，不读 R2)
+      - name: Compare installer (版本 + R2 自愈)
         id: cmp
         run: |
           CW=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('win_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
           CM=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('mac_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
           CA=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('win_arm64_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
           FORCE="${{ github.event.inputs.force_claude }}"
-          if [ "$FORCE" != "true" ] && [ "$CW" = "${{ steps.probe.outputs.win_ver }}" ] && [ "$CM" = "${{ steps.probe.outputs.mac_ver }}" ] && [ "$CA" = "${{ steps.probe.outputs.win_arm64_ver }}" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "安装包版本未变 win=$CW arm64=$CA mac=$CM"
+          # R2 自愈：latest/win-x64 不在 R2(被清空 / 上轮记录了却没上传成功)→ 强制重镜像，避免「repo manifest 说已镜像但 R2 是空的」卡死
+          R2_HAS_LATEST=$(aws s3 ls "s3://$R2_BUCKET/$PREFIX/latest/win-x64" --endpoint-url "$R2_ENDPOINT" 2>/dev/null | grep -c . || true)
+          if [ "$FORCE" != "true" ] && [ "$R2_HAS_LATEST" != "0" ] && [ "$CW" = "${{ steps.probe.outputs.win_ver }}" ] && [ "$CM" = "${{ steps.probe.outputs.mac_ver }}" ] && [ "$CA" = "${{ steps.probe.outputs.win_arm64_ver }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "版本未变且 R2 已有 latest → 跳过 win=$CW arm64=$CA mac=$CM"
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "安装包有更新(或 force) win:$CW->${{ steps.probe.outputs.win_ver }} arm64:$CA->${{ steps.probe.outputs.win_arm64_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
+            [ "$R2_HAS_LATEST" = "0" ] && echo "⚠ R2 缺 latest/win-x64 → 强制重镜像(自愈)"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "安装包有更新/force/或 R2 缺 latest win:$CW->${{ steps.probe.outputs.win_ver }} arm64:$CA->${{ steps.probe.outputs.win_arm64_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
           fi
 
       - name: Download installer + parse CD pin + checksum + manifest
@@ -214,9 +217,9 @@ jobs:
           put "out/$WF" "s3://$R2_BUCKET/$PREFIX/archive/$WV/$WF"
           put "out/$MF" "s3://$R2_BUCKET/$PREFIX/archive/$MV/$MF"
           [ -n "$AF" ] && [ -f "out/$AF" ] && put "out/$AF" "s3://$R2_BUCKET/$PREFIX/archive/$AV/$AF" || true
-          # ② latest 短链(qopad 消费；Content-Disposition 给出正确文件名)
+          # ② latest 短链(qopad 消费；Content-Disposition 给出正确文件名)。不传 win 别名(=win-x64 字节重复)——
+          #    新版 qopad 走 win-{arch}，线上无用户用 /latest/win，去掉省一份 231MB。
           put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win-x64" --content-type application/msix --content-disposition "attachment; filename=\"$WF\""
-          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win"     --content-type application/msix --content-disposition "attachment; filename=\"$WF\""   # win 别名=x64(兼容旧 qopad 不带 arch 的调用)
           if [ -n "$AF" ] && [ -f "out/$AF" ]; then
             put "out/$AF" "s3://$R2_BUCKET/$PREFIX/latest/win-arm64" --content-type application/msix --content-disposition "attachment; filename=\"$AF\""
           else
@@ -389,7 +392,7 @@ jobs:
       MAC_X64_URL: "https://persistent.oaistatic.com/codex-app-prod/Codex-latest-x64.dmg"   # x64 latest 稳定别名
       WIN_MIN_BYTES: "300000000"   # MSIX 实际 ~640MB；<300MB 视为错误页/半截包 → 该架构判失败(不覆盖 R2)
       MAC_MIN_BYTES: "200000000"   # dmg 实际 466-505MB
-      KEEP_ARCHIVE: "3"            # Codex 单版 ~2.3GB(win 640×2 + mac 500×2)；留最近 3 版控 R2 存储
+      KEEP_ARCHIVE: "0"           # Codex 单版 ~2.25GB 太大 → 默认不归档(0)，只保 latest/*(qopad 只用 latest，回滚靠重跑工作流)。想留归档改 >0=保留最近 N 版
       FE3_ATTEMPTS: "8"           # 微软商店 FE3 偶发限流 → 每架构最多 8 次(解析+下载一体重试，每次拿新签名 URL)
       MANIFEST: "codex-manifest.json"
     steps:
@@ -450,6 +453,12 @@ jobs:
               try: prev=json.load(open(mp)).get("signature","")
               except Exception: pass
           changed="true" if (sig!=prev or os.environ.get("FORCE")=="true") else "false"
+          if changed=="false":
+              # R2 自愈：latest/win-x64 不在 R2(被清空 / 上轮记录了却没上传成功)→ 强制重镜像
+              import subprocess
+              r=subprocess.run(["aws","s3","ls",f"s3://{os.environ['R2_BUCKET']}/{os.environ['PREFIX']}/latest/win-x64","--endpoint-url",os.environ["R2_ENDPOINT"]], capture_output=True, text=True)
+              if not r.stdout.strip():
+                  changed="true"; sys.stderr.write("⚠ R2 缺 latest/win-x64 → 强制重镜像(自愈)\n")
           print(f"win_ver={win_ver}"); print(f"codex_ver={codex_ver}"); print(f"changed={changed}")
           with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"CODEX_SIGNATURE={sig}\n")
           sys.stderr.write(f"signature now={sig} prev={prev} changed={changed}\n")
@@ -550,8 +559,10 @@ jobs:
           [ ${#READY[@]} -eq 0 ] && { echo "无就绪产物，跳过上传"; exit 0; }
           # checksums(仅就绪产物)
           : > SHA256SUMS.txt; for k in "${READY[@]}"; do sha256sum "${FILE[$k]}" >> SHA256SUMS.txt; done
-          # ① 先归档(可回滚)
-          for k in "${READY[@]}"; do put "${FILE[$k]}" "s3://$R2_BUCKET/$PREFIX/archive/$V/${FILE[$k]}"; done
+          # ① 先归档(可回滚) —— KEEP_ARCHIVE=0 跳过(Codex 单版太大，默认不归档省 R2 存储)
+          if [ "${KEEP_ARCHIVE:-0}" -gt 0 ]; then
+            for k in "${READY[@]}"; do put "${FILE[$k]}" "s3://$R2_BUCKET/$PREFIX/archive/$V/${FILE[$k]}"; done
+          fi
           # ② manifest.json(公布 sha256 可比对官方)
           python3 - "$V" "${CODEX_VER}" "${READY[@]}" <<'PY'
           import sys, os, json, hashlib, datetime
@@ -575,13 +586,11 @@ jobs:
           # latest.json 版本清单(对齐 qopad 版本约定，展示/未来版本回退用)
           printf '{"version":"%s","codex_version":"%s","mirrored_at":"%s"}\n' "$V" "$CODEX_VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > latest.json
           put latest.json "s3://$R2_BUCKET/$PREFIX/latest.json" --content-type "application/json; charset=utf-8" --cache-control 'public, max-age=300'
-          # ③ latest 短链最后传(qopad 消费)；win-x64 就绪时顺带更新 win 别名
+          # ③ latest 短链最后传(qopad 消费)。不传 win 别名(=win-x64 重复)——新版 qopad 走 win-{arch}，
+          #    codex 无已发布客户端用 /latest/win，省一份 640MB 重复。
           for k in "${READY[@]}"; do
             put "${FILE[$k]}" "s3://$R2_BUCKET/$PREFIX/latest/${SHORT[$k]}" --content-type "${CT[$k]}" --content-disposition "attachment; filename=\"${DLNAME[$k]}\""
           done
-          if [ -f Codex-Windows-x64.msix ]; then
-            put Codex-Windows-x64.msix "s3://$R2_BUCKET/$PREFIX/latest/win" --content-type application/msix --content-disposition 'attachment; filename="Codex-Windows-x64.msix"'
-          fi
           echo "Codex 上传完成 win_ver=$V ready=${READY[*]}"
 
       # ⑤ 回写仓库 codex-manifest.json(signature 作 compare 基准) + prune + robust push。
@@ -594,7 +603,7 @@ jobs:
           set -e
           python3 - <<'PY'
           import json, os, re
-          mp=os.environ["MANIFEST"]; keep=int(os.environ["KEEP_ARCHIVE"])
+          mp=os.environ["MANIFEST"]; keep=int(os.environ["KEEP_ARCHIVE"]) or 8   # KEEP_ARCHIVE=0 时 [-0:] 会取全量→用 8 兜底(mirrored 仅版本串，极小)
           cur=json.load(open(mp)) if os.path.exists(mp) else {}
           done=set(cur.get("mirrored",[]))
           if os.environ.get("CHANGED")=="true": done.add(os.environ["V"])
@@ -603,7 +612,7 @@ jobs:
                      "mirrored":sorted(done, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]},
                     open(mp,"w"), indent=2, ensure_ascii=False)
           PY
-          if [ "$CHANGED" = "true" ]; then
+          if [ "$CHANGED" = "true" ] && [ "${KEEP_ARCHIVE:-0}" -gt 0 ]; then   # KEEP_ARCHIVE=0 不归档→无需 prune
             vers=$(aws s3 ls "s3://$R2_BUCKET/$PREFIX/archive/" --endpoint-url "$R2_ENDPOINT" 2>/dev/null | awk '/PRE/{gsub(/\/$/,"",$2);print $2}' | grep -E '^[0-9]+\.' | sort -V || true)
             total=$(printf '%s\n' "$vers" | grep -c . || true); drop=$(( total - KEEP_ARCHIVE ))
             if [ "$drop" -gt 0 ]; then

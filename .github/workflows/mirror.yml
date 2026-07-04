@@ -174,31 +174,33 @@ jobs:
                   sys.stderr.write(f"解析 CD pin = {pin or '(未命中)'} (from {asar})\n"); return pin
               except Exception as e:
                   sys.stderr.write(f"解析 CD pin 失败：{e}\n"); return ""
-          wf,mf=os.environ["WIN_FILE"],os.environ["MAC_FILE"]
-          ws,wn=dl(os.environ["WIN_URL"], f"out/{wf}", int(os.environ["WIN_MIN_BYTES"]))
-          ms,mn=dl(os.environ["MAC_URL"], f"out/{mf}", int(os.environ["MAC_MIN_BYTES"]))
-          cd_pin=parse_cd_pin(f"out/{wf}")
+          # ★ Claude 的 x64/arm64 MSIX 共享同一 upstream 文件名(buildHash 不区分架构) → 必须用架构区分的本地名，
+          #   否则 out/<WIN_FILE> 与 out/<ARM_FILE> 同路径、arm64 覆盖 x64，致 latest/win-x64 实为 arm64 包(已踩)。
+          WINX="out/Claude-win-x64.msix"; ARMX="out/Claude-win-arm64.msix"; MACF="out/Claude-mac.dmg"
+          ws,wn=dl(os.environ["WIN_URL"], WINX, int(os.environ["WIN_MIN_BYTES"]))
+          ms,mn=dl(os.environ["MAC_URL"], MACF, int(os.environ["MAC_MIN_BYTES"]))
+          cd_pin=parse_cd_pin(WINX)
           info={"tool":"claude-desktop","installer_kind":"msix",
                 "win_ver":os.environ["WIN_VER"],"mac_ver":os.environ["MAC_VER"],
-                "win_file":wf,"mac_file":mf,"win_sha256":ws,"mac_sha256":ms,
+                "win_file":"Claude-win-x64.msix","mac_file":"Claude-mac.dmg","win_sha256":ws,"mac_sha256":ms,
                 "win_size":wn,"mac_size":mn,"cd_cc_pin":cd_pin,
                 "win_upstream":os.environ["WIN_URL"],"mac_upstream":os.environ["MAC_URL"],
                 "mirrored_at_utc":datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
-          lines=[f"{ws}  {wf}", f"{ms}  {mf}"]
+          lines=[f"{ws}  Claude-win-x64.msix", f"{ms}  Claude-mac.dmg"]
           # arm64 best-effort：探到了才下(下失败不炸整轮，保留 R2 旧 arm64)
           au=os.environ.get("ARM_URL","")
           if au:
-              af,av=os.environ["ARM_FILE"],os.environ["ARM_VER"]
+              av=os.environ["ARM_VER"]
               try:
-                  a_s,a_n=dl(au, f"out/{af}", int(os.environ["WIN_MIN_BYTES"]))
-                  info.update({"win_arm64_ver":av,"win_arm64_file":af,"win_arm64_sha256":a_s,"win_arm64_size":a_n})
-                  lines.append(f"{a_s}  {af}")
-                  sys.stderr.write(f"arm64 已下 {af} {a_n}B\n")
+                  a_s,a_n=dl(au, ARMX, int(os.environ["WIN_MIN_BYTES"]))
+                  info.update({"win_arm64_ver":av,"win_arm64_file":"Claude-win-arm64.msix","win_arm64_sha256":a_s,"win_arm64_size":a_n})
+                  lines.append(f"{a_s}  Claude-win-arm64.msix")
+                  sys.stderr.write(f"arm64 已下 {a_n}B\n")
               except SystemExit as e:
                   sys.stderr.write(f"arm64 下载失败(跳过，保留 R2 旧 arm64)：{e}\n")
           open("out/SHA256SUMS.txt","w").write("\n".join(lines)+"\n")
           json.dump(info, open("out/installer.json","w"), indent=2, ensure_ascii=False)
-          sys.stderr.write(f"downloaded win {wn}B / mac {mn}B / cd_pin={cd_pin}\n")
+          sys.stderr.write(f"downloaded win-x64 {wn}B / mac {mn}B / cd_pin={cd_pin}\n")
           PY
 
       - name: Upload installer to R2
@@ -213,19 +215,19 @@ jobs:
         run: |
           set -e
           put(){ aws s3 cp --endpoint-url "$R2_ENDPOINT" "$@"; }
+          # 本地用架构区分名(Claude x64/arm64 共享 upstream 文件名 → 上传源必须区分，否则 win-x64 传成 arm64 包)
           # ① 先归档(可回滚) —— latest 短链最后传，避免 latest 指向半更新
-          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/archive/$WV/$WF"
-          put "out/$MF" "s3://$R2_BUCKET/$PREFIX/archive/$MV/$MF"
-          [ -n "$AF" ] && [ -f "out/$AF" ] && put "out/$AF" "s3://$R2_BUCKET/$PREFIX/archive/$AV/$AF" || true
-          # ② latest 短链(qopad 消费；Content-Disposition 给出正确文件名)。不传 win 别名(=win-x64 字节重复)——
-          #    新版 qopad 走 win-{arch}，线上无用户用 /latest/win，去掉省一份 231MB。
-          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win-x64" --content-type application/msix --content-disposition "attachment; filename=\"$WF\""
-          if [ -n "$AF" ] && [ -f "out/$AF" ]; then
-            put "out/$AF" "s3://$R2_BUCKET/$PREFIX/latest/win-arm64" --content-type application/msix --content-disposition "attachment; filename=\"$AF\""
+          put "out/Claude-win-x64.msix" "s3://$R2_BUCKET/$PREFIX/archive/$WV/Claude-win-x64.msix"
+          put "out/Claude-mac.dmg"      "s3://$R2_BUCKET/$PREFIX/archive/$MV/Claude-mac.dmg"
+          [ -f "out/Claude-win-arm64.msix" ] && put "out/Claude-win-arm64.msix" "s3://$R2_BUCKET/$PREFIX/archive/$AV/Claude-win-arm64.msix" || true
+          # ② latest 短链(qopad 消费；Content-Disposition 给出正确文件名)。不传 win 别名——新版 qopad 走 win-{arch}。
+          put "out/Claude-win-x64.msix" "s3://$R2_BUCKET/$PREFIX/latest/win-x64" --content-type application/msix --content-disposition 'attachment; filename="Claude-win-x64.msix"'
+          if [ -f "out/Claude-win-arm64.msix" ]; then
+            put "out/Claude-win-arm64.msix" "s3://$R2_BUCKET/$PREFIX/latest/win-arm64" --content-type application/msix --content-disposition 'attachment; filename="Claude-win-arm64.msix"'
           else
             echo "本轮无 arm64 产物：保留 R2 旧 latest/win-arm64 不动"
           fi
-          put "out/$MF" "s3://$R2_BUCKET/$PREFIX/latest/mac" --content-type application/octet-stream --content-disposition "attachment; filename=\"$MF\""
+          put "out/Claude-mac.dmg" "s3://$R2_BUCKET/$PREFIX/latest/mac" --content-type application/octet-stream --content-disposition 'attachment; filename="Claude-mac.dmg"'
           put "out/SHA256SUMS.txt" "s3://$R2_BUCKET/$PREFIX/latest/checksums" --content-type "text/plain; charset=utf-8"
           put "out/installer.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
           echo "Claude Desktop MSIX 上传完成 (win-x64=$WV win-arm64=${AV:-skip} mac=$MV)"

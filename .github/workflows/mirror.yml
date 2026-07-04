@@ -1,56 +1,44 @@
-name: mirror-claude-desktop
+name: mirror-desktop-apps
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║ 镜像 Claude Desktop 国内可达资源 → qopad「一次到位」用上 Code(尽量 Cowork)  ║
+# ║ 统一镜像 3 类国内可达安装资源 → qopad 优先用自建 dl.tkdl.cc              ║
+# ║   job claude：Claude Desktop MSIX(win-x64 + win-arm64) + mac dmg          ║
+# ║               + claude-code 二进制(.zst，从 MSIX 解析 CD 钉死版本)。      ║
+# ║   job codex ：Codex App —— Windows MSIX(win-x64 + win-arm64，经微软商店   ║
+# ║               DisplayCatalog+FE3 解析商店 CDN 直链) + mac dmg(arm64/x64)。 ║
 # ║                                                                            ║
-# ║ 产品化定位(对齐 qopad provision 双写 + 配置页引导,不自动重启):              ║
-# ║  1) 安装包镜像 **MSIX**(不是旧 Squirrel .exe)——Code/Cowork 只认 MSIX 版。   ║
-# ║  2) **从 MSIX 包解析 CD 钉死的 claude-code 版本(pin)**,强制纳入镜像清单,     ║
-# ║     保证「CD 要哪个版本镜像里就有哪个版本」→ qopad 预置一次命中、不再 No path。║
-# ║  3) claude-code 二进制镜像(.zst+manifest)供 qopad 双写到普通 %APPDATA%\Claude║
-# ║     与 3P %LOCALAPPDATA%\Claude-3p 两个目录(3P/Gateway 模式真相)。            ║
-# ║  · 时序:先探 MSIX 版本 → 变了才下包解析 pin(没变复用缓存 pin,省 200MB)       ║
-# ║         → pin ∪ npm-recent 决定 claude-code 镜像版本 → 各自 latest/prune。   ║
-# ║  · 不做:不自动开虚拟机平台/不自动重启用户机器——那属 qopad 配置页「引导」范畴。║
-# ║  · Cowork 的 rootfs.vhdx(~2GB Linux VM 镜像)默认不镜像(太大+需手动开 VM),     ║
-# ║    走 qopad 配置页引导用户挂代理;如需镜像可另起 workflow。                    ║
+# ║ 两个 job 同文件、串行(codex needs claude)、各推各的 manifest → 零 push 竞争。║
+# ║ codex `if: always()` 解耦：claude 失败也照样镜像 codex。                    ║
+# ║ 版本策略：只增量镜像"上游有的新版本"(github/上游拉到新版 → 传 R2)，        ║
+# ║   latest/* 恒指最新(qopad 消费)，archive/<ver>/ 保留最近 N 版可回滚；       ║
+# ║   全链路重试 + 下载有效性校验 + 版本一致性护栏 + latest.json 版本清单。      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 on:
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "17 */12 * * *"      # 每 12 小时(更新频率放慢；qopad 侧 winget msstore 只读探测新版，镜像 12h 内追平)
   workflow_dispatch:
     inputs:
+      force_claude:
+        description: "填 true 强制重镜像 Claude Desktop 安装包(即使版本未变)"
+        required: false
+      force_codex:
+        description: "填 true 强制重镜像 Codex App(即使版本/ETag 未变)"
+        required: false
       cc_versions:
         description: "(可选) 手动指定 claude-code 版本，逗号分隔；留空=自动(CD pin ∪ npm 最近 N)"
-        required: false
-      force_pin_refresh:
-        description: "(可选) 填 true 强制重新下 MSIX 解析 CD pin（即使版本号没变）"
         required: false
 
 permissions:
   contents: write
 
+# 跨"工作流运行"串行：同一 group 的多次 run 排队，绝不并发提交同一仓库。
 concurrency:
-  group: mirror-claude-desktop
+  group: mirror-desktop-apps
   cancel-in-progress: false
 
+# 仅放跨 job 共享的 R2 凭证；工具专属参数放各 job 的 env。
 env:
-  # —— 安装包(installer)：Windows 镜像 MSIX，mac 镜像 dmg ——
-  PREFIX: claude-desktop
-  WIN_REDIRECT: "https://claude.ai/api/desktop/win32/x64/msix/latest/redirect"   # ★ exe→msix
-  MAC_REDIRECT: "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
-  INST_KEEP: "12"                  # 安装包 archive 保留最近 12 版
-  WIN_MIN_BYTES: "60000000"        # MSIX ≥ ~60MB 才算有效（挡错误页/半截包）
-  MAC_MIN_BYTES: "60000000"
-  # —— Code 二进制(claude-code) ——
-  CC_PREFIX: claude-code
-  NPM_META: "https://registry.npmjs.org/@anthropic-ai/claude-code-win32-x64"
-  REL_BASE: "https://downloads.claude.ai/claude-code-releases"
-  CC_KEEP_RECENT: "12"             # npm 兜底窗口（CD pin 之外多覆盖几个近版）
-  CC_KEEP_ARCHIVE: "16"            # R2 保留版本数（须 ≥ KEEP_RECENT，否则当期被 prune）
-  # —— 共享 ——
-  MANIFEST: "manifest.json"        # 仓库内状态：安装包版本 + CD pin 缓存 + claude-code 已镜像列表
   AWS_DEFAULT_REGION: auto
   AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -58,8 +46,23 @@ env:
   R2_BUCKET: ${{ secrets.R2_BUCKET }}
 
 jobs:
-  mirror:
+  # ══════════════════════════ JOB 1：Claude Desktop + claude-code ══════════════════════════
+  claude:
     runs-on: ubuntu-latest
+    env:
+      PREFIX: claude-desktop
+      WIN_REDIRECT: "https://claude.ai/api/desktop/win32/x64/msix/latest/redirect"
+      WIN_ARM64_REDIRECT: "https://claude.ai/api/desktop/win32/arm64/msix/latest/redirect"
+      MAC_REDIRECT: "https://claude.ai/api/desktop/darwin/universal/dmg/latest/redirect"
+      INST_KEEP: "12"                 # 安装包 archive 保留最近 12 版
+      WIN_MIN_BYTES: "60000000"       # MSIX ≥ ~60MB 才算有效(挡错误页/半截包)
+      MAC_MIN_BYTES: "60000000"
+      CC_PREFIX: claude-code
+      NPM_META: "https://registry.npmjs.org/@anthropic-ai/claude-code-win32-x64"
+      REL_BASE: "https://downloads.claude.ai/claude-code-releases"
+      CC_KEEP_RECENT: "12"
+      CC_KEEP_ARCHIVE: "16"
+      MANIFEST: "manifest.json"
     steps:
       - name: Checkout (仓库内 manifest 作对比基准 + keepalive 需要 git)
         uses: actions/checkout@v4
@@ -69,8 +72,8 @@ jobs:
           python3 -m pip install --quiet curl_cffi
           sudo apt-get update -qq && sudo apt-get install -y -qq unzip
 
-      # ========================= A. 安装包(MSIX) =========================
-      - name: Probe installer (impersonate Chrome, 带重试)
+      # ── A. 安装包(MSIX x64 + arm64 + mac dmg) ──
+      - name: Probe installer (impersonate Chrome, 带重试；arm64 best-effort)
         id: probe
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
@@ -95,11 +98,18 @@ jobs:
                   sys.stderr.write(f"probe {url} 第 {i+1}/{ATTEMPTS} 次失败：{last}\n")
                   if i<ATTEMPTS-1: time.sleep(min(2**i,30))
               sys.exit(f"probe {url} 重试 {ATTEMPTS} 次仍失败：{last}")
-          wl,wv,wf=probe(os.environ["WIN_REDIRECT"])
-          ml,mv,mf=probe(os.environ["MAC_REDIRECT"])
-          for k,v in {"win_url":wl,"mac_url":ml,"win_ver":wv,"mac_ver":mv,"win_file":wf,"mac_file":mf}.items():
-              print(f"{k}={v}")
-          sys.stderr.write(f"probe ok: win(MSIX) {wv} / mac {mv}\n")
+          def probe_opt(url):
+              try: return probe(url)
+              except SystemExit as e:
+                  sys.stderr.write(f"arm64 probe 失败(本轮跳过 arm64，保留 R2 旧 arm64)：{e}\n"); return (None,None,None)
+          wl,wv,wf=probe(os.environ["WIN_REDIRECT"])              # x64 必需
+          ml,mv,mf=probe(os.environ["MAC_REDIRECT"])              # mac 必需
+          al,av,af=probe_opt(os.environ["WIN_ARM64_REDIRECT"])   # arm64 best-effort
+          out={"win_url":wl,"mac_url":ml,"win_ver":wv,"mac_ver":mv,"win_file":wf,"mac_file":mf}
+          if al: out.update({"win_arm64_url":al,"win_arm64_ver":av,"win_arm64_file":af})
+          else:  out.update({"win_arm64_url":"","win_arm64_ver":"","win_arm64_file":""})
+          for k,v in out.items(): print(f"{k}={v}")
+          sys.stderr.write(f"probe ok: win-x64 {wv} / win-arm64 {av or '(跳过)'} / mac {mv}\n")
           PY
 
       - name: Compare installer (轻量，不读 R2)
@@ -107,22 +117,26 @@ jobs:
         run: |
           CW=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('win_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
           CM=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('mac_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
-          if [ "$CW" = "${{ steps.probe.outputs.win_ver }}" ] && [ "$CM" = "${{ steps.probe.outputs.mac_ver }}" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "安装包版本未变 win=$CW mac=$CM"
+          CA=$(python3 -c "import json,os;p=os.environ['MANIFEST'];print(json.load(open(p)).get('win_arm64_ver','') if os.path.exists(p) else '')" 2>/dev/null || true)
+          FORCE="${{ github.event.inputs.force_claude }}"
+          if [ "$FORCE" != "true" ] && [ "$CW" = "${{ steps.probe.outputs.win_ver }}" ] && [ "$CM" = "${{ steps.probe.outputs.mac_ver }}" ] && [ "$CA" = "${{ steps.probe.outputs.win_arm64_ver }}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "安装包版本未变 win=$CW arm64=$CA mac=$CM"
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "安装包有更新 win:$CW->${{ steps.probe.outputs.win_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "安装包有更新(或 force) win:$CW->${{ steps.probe.outputs.win_ver }} arm64:$CA->${{ steps.probe.outputs.win_arm64_ver }} mac:$CM->${{ steps.probe.outputs.mac_ver }}"
           fi
 
-      # 下载 MSIX + dmg；并 ★从 MSIX 的 app.asar 解析 CD 钉死的 claude-code 版本(cd_cc_pin)★
       - name: Download installer + parse CD pin + checksum + manifest
         if: success() && steps.cmp.outputs.changed == 'true'
         env:
           WIN_URL: ${{ steps.probe.outputs.win_url }}
           MAC_URL: ${{ steps.probe.outputs.mac_url }}
+          ARM_URL: ${{ steps.probe.outputs.win_arm64_url }}
           WIN_VER: ${{ steps.probe.outputs.win_ver }}
           MAC_VER: ${{ steps.probe.outputs.mac_ver }}
+          ARM_VER: ${{ steps.probe.outputs.win_arm64_ver }}
           WIN_FILE: ${{ steps.probe.outputs.win_file }}
           MAC_FILE: ${{ steps.probe.outputs.mac_file }}
+          ARM_FILE: ${{ steps.probe.outputs.win_arm64_file }}
         run: |
           python3 - <<'PY'
           import os, hashlib, json, datetime, sys, time, zipfile, re
@@ -138,43 +152,49 @@ jobs:
                       r=requests.get(url, impersonate=prof, timeout=1200)
                       n=len(r.content)
                       if r.status_code==200 and n>=min_bytes:
-                          open(path,"wb").write(r.content)
-                          return hashlib.sha256(r.content).hexdigest(), n
+                          open(path,"wb").write(r.content); return hashlib.sha256(r.content).hexdigest(), n
                       last=f"HTTP {r.status_code}, {n}B (impersonate={prof})"
                   except Exception as e:
                       last=f"{type(e).__name__}: {e} (impersonate={prof})"
                   sys.stderr.write(f"download {url} 第 {i+1}/{ATTEMPTS} 次失败：{last}\n")
                   if i<ATTEMPTS-1: time.sleep(min(2**i,30))
               sys.exit(f"download {url} 重试 {ATTEMPTS} 次仍失败：{last}")
-          # 从 MSIX(=ZIP) 内 app/resources/app.asar 解析 CD 钉死的 claude-code 版本。
-          # asar 内嵌的 JS 里有且仅有一处 '"version":"2.1.x","manifest"'(CD 自带的 SDK 版本声明)。
+          # 从 MSIX(=ZIP) 内 app.asar 解析 CD 钉死的 claude-code 版本(qopad Code 模式预置命中)
           def parse_cd_pin(msix_path):
               try:
                   z=zipfile.ZipFile(msix_path)
-                  asar=next((n for n in z.namelist()
-                             if n.lower().endswith("app.asar") and "unpacked" not in n.lower()), None)
-                  if not asar:
-                      sys.stderr.write("MSIX 内未找到 app.asar，跳过 pin 解析\n"); return ""
+                  asar=next((n for n in z.namelist() if n.lower().endswith("app.asar") and "unpacked" not in n.lower()), None)
+                  if not asar: sys.stderr.write("MSIX 内未找到 app.asar，跳过 pin 解析\n"); return ""
                   data=z.read(asar)
                   m=re.search(rb'"version":"([0-9]+\.[0-9]+\.[0-9]+)","manifest"', data)
                   pin=m.group(1).decode() if m else ""
-                  sys.stderr.write(f"解析 CD pin = {pin or '(未命中)'} (from {asar})\n")
-                  return pin
+                  sys.stderr.write(f"解析 CD pin = {pin or '(未命中)'} (from {asar})\n"); return pin
               except Exception as e:
                   sys.stderr.write(f"解析 CD pin 失败：{e}\n"); return ""
           wf,mf=os.environ["WIN_FILE"],os.environ["MAC_FILE"]
           ws,wn=dl(os.environ["WIN_URL"], f"out/{wf}", int(os.environ["WIN_MIN_BYTES"]))
           ms,mn=dl(os.environ["MAC_URL"], f"out/{mf}", int(os.environ["MAC_MIN_BYTES"]))
           cd_pin=parse_cd_pin(f"out/{wf}")
-          open("out/SHA256SUMS.txt","w").write(f"{ws}  {wf}\n{ms}  {mf}\n")
-          json.dump({
-            "tool":"claude-desktop","installer_kind":"msix",
-            "win_ver":os.environ["WIN_VER"],"mac_ver":os.environ["MAC_VER"],
-            "win_file":wf,"mac_file":mf,"win_sha256":ws,"mac_sha256":ms,
-            "win_size":wn,"mac_size":mn,"cd_cc_pin":cd_pin,
-            "win_upstream":os.environ["WIN_URL"],"mac_upstream":os.environ["MAC_URL"],
-            "mirrored_at_utc":datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-          }, open("out/installer.json","w"), indent=2, ensure_ascii=False)
+          info={"tool":"claude-desktop","installer_kind":"msix",
+                "win_ver":os.environ["WIN_VER"],"mac_ver":os.environ["MAC_VER"],
+                "win_file":wf,"mac_file":mf,"win_sha256":ws,"mac_sha256":ms,
+                "win_size":wn,"mac_size":mn,"cd_cc_pin":cd_pin,
+                "win_upstream":os.environ["WIN_URL"],"mac_upstream":os.environ["MAC_URL"],
+                "mirrored_at_utc":datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+          lines=[f"{ws}  {wf}", f"{ms}  {mf}"]
+          # arm64 best-effort：探到了才下(下失败不炸整轮，保留 R2 旧 arm64)
+          au=os.environ.get("ARM_URL","")
+          if au:
+              af,av=os.environ["ARM_FILE"],os.environ["ARM_VER"]
+              try:
+                  a_s,a_n=dl(au, f"out/{af}", int(os.environ["WIN_MIN_BYTES"]))
+                  info.update({"win_arm64_ver":av,"win_arm64_file":af,"win_arm64_sha256":a_s,"win_arm64_size":a_n})
+                  lines.append(f"{a_s}  {af}")
+                  sys.stderr.write(f"arm64 已下 {af} {a_n}B\n")
+              except SystemExit as e:
+                  sys.stderr.write(f"arm64 下载失败(跳过，保留 R2 旧 arm64)：{e}\n")
+          open("out/SHA256SUMS.txt","w").write("\n".join(lines)+"\n")
+          json.dump(info, open("out/installer.json","w"), indent=2, ensure_ascii=False)
           sys.stderr.write(f"downloaded win {wn}B / mac {mn}B / cd_pin={cd_pin}\n")
           PY
 
@@ -183,22 +203,31 @@ jobs:
         env:
           WV: ${{ steps.probe.outputs.win_ver }}
           MV: ${{ steps.probe.outputs.mac_ver }}
+          AV: ${{ steps.probe.outputs.win_arm64_ver }}
           WF: ${{ steps.probe.outputs.win_file }}
           MF: ${{ steps.probe.outputs.mac_file }}
+          AF: ${{ steps.probe.outputs.win_arm64_file }}
         run: |
           set -e
           put(){ aws s3 cp --endpoint-url "$R2_ENDPOINT" "$@"; }
+          # ① 先归档(可回滚) —— latest 短链最后传，避免 latest 指向半更新
           put "out/$WF" "s3://$R2_BUCKET/$PREFIX/archive/$WV/$WF"
           put "out/$MF" "s3://$R2_BUCKET/$PREFIX/archive/$MV/$MF"
-          # latest/win 现在指向 .msix；content-type 用 MSIX 专属，便于 qopad Add-AppxPackage 识别
-          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win" --content-type application/msix --content-disposition "attachment; filename=\"$WF\""
+          [ -n "$AF" ] && [ -f "out/$AF" ] && put "out/$AF" "s3://$R2_BUCKET/$PREFIX/archive/$AV/$AF" || true
+          # ② latest 短链(qopad 消费；Content-Disposition 给出正确文件名)
+          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win-x64" --content-type application/msix --content-disposition "attachment; filename=\"$WF\""
+          put "out/$WF" "s3://$R2_BUCKET/$PREFIX/latest/win"     --content-type application/msix --content-disposition "attachment; filename=\"$WF\""   # win 别名=x64(兼容旧 qopad 不带 arch 的调用)
+          if [ -n "$AF" ] && [ -f "out/$AF" ]; then
+            put "out/$AF" "s3://$R2_BUCKET/$PREFIX/latest/win-arm64" --content-type application/msix --content-disposition "attachment; filename=\"$AF\""
+          else
+            echo "本轮无 arm64 产物：保留 R2 旧 latest/win-arm64 不动"
+          fi
           put "out/$MF" "s3://$R2_BUCKET/$PREFIX/latest/mac" --content-type application/octet-stream --content-disposition "attachment; filename=\"$MF\""
           put "out/SHA256SUMS.txt" "s3://$R2_BUCKET/$PREFIX/latest/checksums" --content-type "text/plain; charset=utf-8"
           put "out/installer.json"  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
-          echo "MSIX 安装包上传完成"
+          echo "Claude Desktop MSIX 上传完成 (win-x64=$WV win-arm64=${AV:-skip} mac=$MV)"
 
-      # ===================== B. Code 二进制(claude-code) =====================
-      # 镜像版本 = CD pin(锚定，最高优先，保证 qopad 一次命中) ∪ npm 最近 N(兜底)。
+      # ── B. claude-code 二进制(镜像版本 = CD pin ∪ npm 最近 N) ──
       - name: Resolve claude-code versions & diff
         id: ccplan
         env:
@@ -222,31 +251,23 @@ jobs:
                   if i<5: time.sleep(min(2**i,30))
               sys.exit(f"get {url} 重试 6 次仍失败：{last}")
           def vkey(v): return [int(x) for x in re.findall(r'\d+', v)]
-          mp=os.environ["MANIFEST"]
-          man=json.load(open(mp)) if os.path.exists(mp) else {}
-          # CD pin：本轮若下了新 MSIX 就用刚解析的；否则复用 manifest 缓存（省 200MB 下载）。
+          mp=os.environ["MANIFEST"]; man=json.load(open(mp)) if os.path.exists(mp) else {}
           cd_pin=""
-          if os.path.exists("out/installer.json"):
-              cd_pin=json.load(open("out/installer.json")).get("cd_cc_pin","")
-          if not cd_pin:
-              cd_pin=man.get("cd_cc_pin","")
+          if os.path.exists("out/installer.json"): cd_pin=json.load(open("out/installer.json")).get("cd_cc_pin","")
+          if not cd_pin: cd_pin=man.get("cd_cc_pin","")
           inp=os.environ.get("INPUT_VERSIONS","").strip()
           if inp:
               want=sorted({v.strip() for v in inp.split(",") if v.strip()}, key=vkey)
           else:
               meta=get(os.environ["NPM_META"]).json()
               recent=sorted(meta["versions"].keys(), key=vkey)[-int(os.environ["CC_KEEP_RECENT"]):]
-              want=sorted(set(recent) | ({cd_pin} if cd_pin else set()), key=vkey)   # ★ pin 强制纳入
-          # latest 仍报 npm latest（全新机器无 CD 日志意图时的回退）；CD pin 单列，qopad 优先用 pin
+              want=sorted(set(recent) | ({cd_pin} if cd_pin else set()), key=vkey)   # CD pin 强制纳入
           latest = want[-1]
-          try:
-              latest = get(os.environ["NPM_META"]).json()["dist-tags"]["latest"]
+          try: latest = get(os.environ["NPM_META"]).json()["dist-tags"]["latest"]
           except Exception: pass
           done=set(man.get("claude_code_mirrored",[]))
           todo=[v for v in want if v not in done]
-          print(f"cc_latest={latest}")
-          print(f"cc_pin={cd_pin}")
-          print("cc_todo="+",".join(todo))
+          print(f"cc_latest={latest}"); print(f"cc_pin={cd_pin}"); print("cc_todo="+",".join(todo))
           sys.stderr.write(f"cc pin={cd_pin} want={want} 已镜像={sorted(done)} 待镜像={todo}\n")
           PY
 
@@ -267,8 +288,7 @@ jobs:
               for i in range(6):
                   prof=PROFILES[i%len(PROFILES)]
                   try:
-                      r=requests.get(url, impersonate=prof, timeout=900)
-                      n=len(r.content)
+                      r=requests.get(url, impersonate=prof, timeout=900); n=len(r.content)
                       if r.status_code==200 and (not check_size or n>=MIN): return r.content
                       last=f"HTTP {r.status_code}, {n}B (impersonate={prof})"
                   except Exception as e:
@@ -283,95 +303,311 @@ jobs:
               sys.stderr.write(f"=== 镜像 claude-code {v} ===\n")
               zst=dl(f"{REL}/{v}/win32-x64/claude.exe.zst", True)
               man=json.loads(dl(f"{REL}/{v}/manifest.json", False))
-              zst_sha=hashlib.sha256(zst).hexdigest()
-              exe_sha=man["platforms"]["win32-x64"]["checksum"]
+              zst_sha=hashlib.sha256(zst).hexdigest(); exe_sha=man["platforms"]["win32-x64"]["checksum"]
               os.makedirs("cc", exist_ok=True)
               open("cc/claude.exe.zst","wb").write(zst)
-              json.dump({"version":v,"zst_sha256":zst_sha,"exe_sha256":exe_sha,"zst_size":len(zst)},
-                        open("cc/meta.json","w"), ensure_ascii=False)
+              json.dump({"version":v,"zst_sha256":zst_sha,"exe_sha256":exe_sha,"zst_size":len(zst)}, open("cc/meta.json","w"), ensure_ascii=False)
               open("cc/manifest.json","w").write(json.dumps(man))
               s3("cp","cc/claude.exe.zst", f"s3://{B}/{PFX}/{v}/win/claude.exe.zst","--content-type","application/zstd")
               s3("cp","cc/meta.json",      f"s3://{B}/{PFX}/{v}/meta.json",         "--content-type","application/json; charset=utf-8")
               s3("cp","cc/manifest.json",  f"s3://{B}/{PFX}/{v}/manifest.json",     "--content-type","application/json; charset=utf-8")
-              done.append(v)
-              sys.stderr.write(f"已镜像 claude-code {v}：zst={len(zst)}B sha={zst_sha[:12]}…\n")
+              done.append(v); sys.stderr.write(f"已镜像 claude-code {v}：zst={len(zst)}B sha={zst_sha[:12]}…\n")
           print("cc_mirrored="+",".join(done))
           PY
 
-      # ===== C. 合并记录 + latest + prune + robust push =====
+      # ── C. 合并记录(manifest.json) + latest + prune + robust push ──
       - name: Merge-record + latest + prune + push
         if: always() && (steps.cmp.outputs.changed == 'true' || steps.ccplan.outputs.cc_latest != '')
         env:
           WV: ${{ steps.probe.outputs.win_ver }}
           MV: ${{ steps.probe.outputs.mac_ver }}
+          AV: ${{ steps.probe.outputs.win_arm64_ver }}
           CC_LATEST: ${{ steps.ccplan.outputs.cc_latest }}
           CC_PIN: ${{ steps.ccplan.outputs.cc_pin }}
           CC_MIRRORED: ${{ steps.ccmirror.outputs.cc_mirrored }}
         run: |
           set -e
-          # 1) claude-code latest.json + pin(R2)：qopad 无 CD 日志意图时的版本回退 + pin 锚点
+          # 1) claude-code latest.json(R2)：qopad 无 CD 日志意图时的版本回退 + pin 锚点
           if [ -n "$CC_LATEST" ]; then
             printf '{"version":"%s","cd_pin":"%s","mirrored_at":"%s"}\n' "$CC_LATEST" "$CC_PIN" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/cc-latest.json
-            aws s3 cp /tmp/cc-latest.json "s3://$R2_BUCKET/$CC_PREFIX/latest.json" --endpoint-url "$R2_ENDPOINT" \
-              --content-type 'application/json; charset=utf-8' --cache-control 'public, max-age=300'
+            aws s3 cp /tmp/cc-latest.json "s3://$R2_BUCKET/$CC_PREFIX/latest.json" --endpoint-url "$R2_ENDPOINT" --content-type 'application/json; charset=utf-8' --cache-control 'public, max-age=300'
           fi
-          # 2) 合并写仓库 manifest.json（保留旧字段；安装包字段+cd_cc_pin 用本次 out/installer.json 覆盖）
+          # 2) 合并写仓库 manifest.json
           python3 - <<'PY'
           import json, os, re
           mp=os.environ["MANIFEST"]; m=json.load(open(mp)) if os.path.exists(mp) else {}
-          if os.path.exists("out/installer.json"):
-              m.update(json.load(open("out/installer.json")))      # 覆盖 win_ver/mac_ver/.../cd_cc_pin
+          if os.path.exists("out/installer.json"): m.update(json.load(open("out/installer.json")))
           if os.environ.get("CC_LATEST"): m["claude_code_latest"]=os.environ["CC_LATEST"]
           if os.environ.get("CC_PIN"):    m["cd_cc_pin"]=os.environ["CC_PIN"]
           keep=int(os.environ["CC_KEEP_ARCHIVE"])
           mir=set(m.get("claude_code_mirrored",[])) | {v for v in os.environ.get("CC_MIRRORED","").split(",") if v}
-          # 保底：CD pin 永不被 prune 出已镜像列表（即便它很旧），保证 qopad 始终能命中
           if os.environ.get("CC_PIN"): mir.add(os.environ["CC_PIN"])
-          if mir:
-              m["claude_code_mirrored"]=sorted(mir, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]
+          if mir: m["claude_code_mirrored"]=sorted(mir, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]
           json.dump(m, open(mp,"w"), indent=2, ensure_ascii=False)
           PY
-          # 3) prune R2（archive + claude-code 各留最近 N；CD pin 那一版用 -keep 列表保护，不在 prune 删除集）
+          # 3) prune R2(installer archive + claude-code 各留最近 N；CD pin 那版用 -keep 列表保护)
           PROTECT="${CC_PIN}"
-          prune(){  # $1=ls 前缀 $2=保留数 $3=删除前缀 $4=保护版本(可空)
+          prune(){
             local vers total drop
-            vers=$(aws s3 ls "s3://$R2_BUCKET/$1" --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
-                   | awk '/PRE/{gsub(/\/$/,"",$2);print $2}' | grep -E '^[0-9]+\.' | sort -V || true)
+            vers=$(aws s3 ls "s3://$R2_BUCKET/$1" --endpoint-url "$R2_ENDPOINT" 2>/dev/null | awk '/PRE/{gsub(/\/$/,"",$2);print $2}' | grep -E '^[0-9]+\.' | sort -V || true)
             total=$(printf '%s\n' "$vers" | grep -c . || true); drop=$(( total - $2 ))
             [ "$drop" -le 0 ] && return 0
             printf '%s\n' "$vers" | head -n "$drop" | while read -r v; do
               [ -z "$v" ] && continue
-              [ -n "$4" ] && [ "$v" = "$4" ] && { echo "保护 CD pin $v，跳过删除"; continue; }
+              [ -n "$4" ] && [ "$v" = "$4" ] && { echo "保护 CD pin $v"; continue; }
               echo "删除旧版本 $3$v/" && aws s3 rm "s3://$R2_BUCKET/$3$v/" --recursive --endpoint-url "$R2_ENDPOINT"
             done
           }
           prune "$PREFIX/archive/" "$INST_KEEP"      "$PREFIX/archive/" ""
           prune "$CC_PREFIX/"      "$CC_KEEP_ARCHIVE" "$CC_PREFIX/"     "$PROTECT"
-          # 4) 单次 commit + robust push（同 group 不并发；fetch+rebase 仅兜底，绝不强推）
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 4) 单次 commit + robust push
+          git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$MANIFEST"
           if git diff --cached --quiet; then echo "manifest 无变化，跳过提交"; else
-            git commit -m "chore: mirror desktop(MSIX) win ${WV} / mac ${MV} + claude-code ${CC_LATEST} (CD pin ${CC_PIN})"
+            git commit -m "chore: mirror claude desktop(win-x64 ${WV}/arm64 ${AV:-skip}/mac ${MV}) + claude-code ${CC_LATEST} (CD pin ${CC_PIN})"
             for i in 1 2 3 4 5; do
               git push origin "HEAD:${{ github.ref_name }}" && { echo pushed; break; }
-              echo "push 被拒(第 $i 次)，fetch+rebase 重试"
-              git fetch origin "${{ github.ref_name }}"
+              echo "push 被拒(第 $i 次)，fetch+rebase 重试"; git fetch origin "${{ github.ref_name }}"
               git rebase "origin/${{ github.ref_name }}" || { git rebase --abort; exit 1; }
               [ "$i" -lt 5 ] && sleep $((i*2))
             done
           fi
 
-      - name: Keepalive (防 GitHub 60 天自动停用)
+  # ══════════════════════════ JOB 2：Codex App(MSIX via FE3 + mac dmg) ══════════════════════════
+  # needs: claude → 排在 claude 之后串行(各推各 manifest，零 push 竞争)；if: always() → claude 失败也照镜像 codex。
+  codex:
+    needs: claude
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      PREFIX: codex-desktop
+      PRODUCT_ID: "9PLM9XGG6VKS"
+      PUBLISHER: "OpenAI.Codex"
+      WIN_UPDATE_JSON: "https://persistent.oaistatic.com/codex-app-prod/windows-store-update.json"
+      MAC_APPCAST: "https://persistent.oaistatic.com/codex-app-prod/appcast.xml"
+      MAC_ARM64_URL: "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"            # arm64 latest 稳定别名
+      MAC_X64_URL: "https://persistent.oaistatic.com/codex-app-prod/Codex-latest-x64.dmg"   # x64 latest 稳定别名
+      WIN_MIN_BYTES: "300000000"   # MSIX 实际 ~640MB；<300MB 视为错误页/半截包 → 该架构判失败(不覆盖 R2)
+      MAC_MIN_BYTES: "200000000"   # dmg 实际 466-505MB
+      KEEP_ARCHIVE: "3"            # Codex 单版 ~2.3GB(win 640×2 + mac 500×2)；留最近 3 版控 R2 存储
+      FE3_ATTEMPTS: "8"           # 微软商店 FE3 偶发限流 → 每架构最多 8 次(解析+下载一体重试，每次拿新签名 URL)
+      MANIFEST: "codex-manifest.json"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (store-link FE3 解析器)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install curl_cffi
+        run: python3 -m pip install --quiet curl_cffi
+
+      # ① 探测版本 + change detection：signature = win buildVersion | mac arm64 ETag | mac x64 ETag。
+      - name: Probe version & diff
+        id: probe
+        env:
+          FORCE: ${{ github.event.inputs.force_codex }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, sys, json, time, re
+          from curl_cffi import requests
+          PROFILES=["chrome","safari","edge","chrome124","chrome120","chrome116"]
+          def get(url, as_json=True):
+              last="未知错误"
+              for i in range(6):
+                  prof=PROFILES[i%len(PROFILES)]
+                  try:
+                      r=requests.get(url, impersonate=prof, timeout=30, headers={"Accept-Language":"en-US,en;q=0.9"})
+                      if r.status_code==200: return r.json() if as_json else r.text
+                      last=f"HTTP {r.status_code} (impersonate={prof})"
+                  except Exception as e:
+                      last=f"{type(e).__name__}: {e} (impersonate={prof})"
+                  sys.stderr.write(f"get {url} 第 {i+1}/6 次失败：{last}\n")
+                  if i<5: time.sleep(min(2**i,30))
+              sys.exit(f"get {url} 重试 6 次仍失败：{last}")
+          def head_tag(url):
+              for i in range(6):
+                  prof=PROFILES[i%len(PROFILES)]
+                  try:
+                      r=requests.head(url, impersonate=prof, timeout=30, allow_redirects=True)
+                      if r.status_code==200: return (r.headers.get("etag") or r.headers.get("last-modified") or "").strip()
+                  except Exception: pass
+                  time.sleep(min(2**i,10))
+              return ""   # 拿不到 tag 不阻断：靠 win_ver 变化兜底
+          win_ver=(get(os.environ["WIN_UPDATE_JSON"]).get("buildVersion") or "").strip()
+          if not win_ver: sys.exit("windows-store-update.json 未返回 buildVersion")
+          # codex 营销版本(shortVersionString)：best-effort，仅写入 latest.json 展示用
+          codex_ver=""
+          try:
+              m=re.search(r'sparkle:shortVersionString="([^"]+)"', get(os.environ["MAC_APPCAST"], as_json=False))
+              if m: codex_ver=m.group(1)
+          except Exception: pass
+          sig=f"{win_ver}|{head_tag(os.environ['MAC_ARM64_URL'])}|{head_tag(os.environ['MAC_X64_URL'])}"
+          prev=""; mp=os.environ["MANIFEST"]
+          if os.path.exists(mp):
+              try: prev=json.load(open(mp)).get("signature","")
+              except Exception: pass
+          changed="true" if (sig!=prev or os.environ.get("FORCE")=="true") else "false"
+          print(f"win_ver={win_ver}"); print(f"codex_ver={codex_ver}"); print(f"changed={changed}")
+          with open(os.environ["GITHUB_ENV"],"a") as f: f.write(f"CODEX_SIGNATURE={sig}\n")
+          sys.stderr.write(f"signature now={sig} prev={prev} changed={changed}\n")
+          PY
+
+      # ② FE3 解析 + 下载 Windows MSIX(x64 必需 / arm64 best-effort)。解析+下载一体重试(URL 会过期→重解析)，
+      #    版本一致性护栏：moniker 必须匹配探测到的 buildVersion + 架构(防镜像到跑赢/跑输 store 的版本)。
+      - name: Resolve + download Windows MSIX (FE3)
+        if: steps.probe.outputs.changed == 'true'
+        env:
+          WIN_VER: ${{ steps.probe.outputs.win_ver }}
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          echo "预构建 store-link(Release)…"; dotnet build -c Release scripts/store-link 1>/dev/null
+          resolve_dl(){   # $1=arch $2=目标文件；成功=0(写 .moniker) 失败=1
+            local arch="$1" target="$2" a line moniker url sz
+            for a in $(seq 1 "$FE3_ATTEMPTS"); do
+              line="$(dotnet run --no-build -c Release --project scripts/store-link -- "$PRODUCT_ID" "$arch" 2>sl.err | grep -E '^OpenAI\.Codex_' | head -1 || true)"
+              if [ -z "$line" ]; then echo "[$arch] FE3 第 $a/$FE3_ATTEMPTS 次未解析到链接" >&2; tail -3 sl.err >&2 || true; sleep $(( a<6 ? a*8 : 48 )); continue; fi
+              moniker="$(printf '%s' "$line" | cut -f1)"; url="$(printf '%s' "$line" | cut -f2-)"
+              case "$moniker" in
+                "${PUBLISHER}_${WIN_VER}_${arch}__"*) : ;;
+                *) echo "[$arch] moniker 版本不符(期望 ${PUBLISHER}_${WIN_VER}_${arch}__*，得 $moniker)→store 可能刚更新，重试" >&2; sleep 20; continue ;;
+              esac
+              echo "[$arch] 下载 $moniker (${url%%\?*}?<signed>)"
+              if curl -fSL -m 2400 --retry 3 --retry-delay 8 --retry-all-errors -A "Mozilla/5.0" "$url" -o "$target"; then
+                sz=$(stat -c%s "$target" 2>/dev/null || echo 0)
+                if [ "$sz" -ge "$WIN_MIN_BYTES" ]; then echo "$moniker" > "$target.moniker"; echo "[$arch] OK $sz B"; return 0; fi
+                echo "[$arch] 下载过小 $sz < $WIN_MIN_BYTES → 重解析" >&2
+              else echo "[$arch] 下载失败(URL 可能过期)→ 重解析" >&2; fi
+              rm -f "$target"; sleep $(( a*8 ))
+            done
+            return 1
+          }
+          resolve_dl x64 out/Codex-Windows-x64.msix || { echo "x64(必需) 解析/下载失败" >&2; exit 1; }
+          if resolve_dl arm64 out/Codex-Windows-arm64.msix; then echo "arm64 就绪"; else echo "::warning::arm64 本轮失败，保留 R2 旧 arm64"; fi
+
+      # ③ 下载 macOS dmg(arm64 + x64)：oaistatic 官方 latest 稳定别名。
+      - name: Download macOS dmg
+        if: steps.probe.outputs.changed == 'true'
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          dl(){ local url="$1" out="$2" min="$3" sz; if curl -fSL -m 1800 --retry 4 --retry-delay 8 --retry-all-errors -A "Mozilla/5.0" "$url" -o "$out"; then sz=$(stat -c%s "$out" 2>/dev/null||echo 0); [ "$sz" -ge "$min" ] && { echo "$out OK $sz B"; return 0; }; echo "$out 过小 $sz"; fi; rm -f "$out"; return 1; }
+          dl "$MAC_ARM64_URL" out/Codex-mac-arm64.dmg "$MAC_MIN_BYTES" || echo "::warning::mac-arm64 失败，保留 R2 旧包"
+          dl "$MAC_X64_URL"   out/Codex-mac-x64.dmg   "$MAC_MIN_BYTES" || echo "::warning::mac-x64 失败，保留 R2 旧包"
+
+      # ④ 上传 R2：先归档 → checksums/manifest/latest.json → latest 短链最后(避免 latest 半更新)。
+      #    只上传"本轮成功就绪"的产物；失败的架构保留 R2 旧 latest 不动。
+      - name: Upload ready artifacts to R2
+        if: steps.probe.outputs.changed == 'true'
+        env:
+          V: ${{ steps.probe.outputs.win_ver }}
+          CODEX_VER: ${{ steps.probe.outputs.codex_ver }}
+        run: |
+          set -euo pipefail
+          put(){ aws s3 cp --endpoint-url "$R2_ENDPOINT" "$@"; }
+          cd out
+          # 就绪清单(存在且过 size 检查)：label→(本地文件, R2 短链名, content-type, 下载文件名)
+          declare -A SHORT CT DLNAME
+          SHORT[win-x64]=win-x64;      CT[win-x64]=application/msix;               DLNAME[win-x64]=Codex-Windows-x64.msix
+          SHORT[win-arm64]=win-arm64;  CT[win-arm64]=application/msix;             DLNAME[win-arm64]=Codex-Windows-arm64.msix
+          SHORT[mac-arm64]=mac-arm64;  CT[mac-arm64]=application/x-apple-diskimage; DLNAME[mac-arm64]=Codex-mac-arm64.dmg
+          SHORT[mac-x64]=mac-x64;      CT[mac-x64]=application/x-apple-diskimage;   DLNAME[mac-x64]=Codex-mac-x64.dmg
+          declare -A FILE
+          FILE[win-x64]=Codex-Windows-x64.msix; FILE[win-arm64]=Codex-Windows-arm64.msix
+          FILE[mac-arm64]=Codex-mac-arm64.dmg;  FILE[mac-x64]=Codex-mac-x64.dmg
+          READY=()
+          for k in win-x64 win-arm64 mac-arm64 mac-x64; do [ -f "${FILE[$k]}" ] && READY+=("$k"); done
+          echo "本轮就绪产物: ${READY[*]}"
+          [ ${#READY[@]} -eq 0 ] && { echo "无就绪产物，跳过上传"; exit 0; }
+          # checksums(仅就绪产物)
+          : > SHA256SUMS.txt; for k in "${READY[@]}"; do sha256sum "${FILE[$k]}" >> SHA256SUMS.txt; done
+          # ① 先归档(可回滚)
+          for k in "${READY[@]}"; do put "${FILE[$k]}" "s3://$R2_BUCKET/$PREFIX/archive/$V/${FILE[$k]}"; done
+          # ② manifest.json(公布 sha256 可比对官方)
+          python3 - "$V" "${CODEX_VER}" "${READY[@]}" <<'PY'
+          import sys, os, json, hashlib, datetime
+          v=sys.argv[1]; codex_ver=sys.argv[2]; ready=sys.argv[3:]
+          FILE={"win-x64":"Codex-Windows-x64.msix","win-arm64":"Codex-Windows-arm64.msix","mac-arm64":"Codex-mac-arm64.dmg","mac-x64":"Codex-mac-x64.dmg"}
+          arts={}
+          for k in ready:
+              b=open(FILE[k],"rb").read(); arts[k]={"file":FILE[k],"size":len(b),"sha256":hashlib.sha256(b).hexdigest()}
+          mon={}
+          for arch in ("x64","arm64"):
+              p=f"Codex-Windows-{arch}.msix.moniker"
+              if os.path.exists(p): mon[arch]=open(p).read().strip()
+          json.dump({"tool":"codex-desktop","win_ver":v,"codex_version":codex_ver,
+                     "signature":os.environ.get("CODEX_SIGNATURE",""),"windows_package_monikers":mon,
+                     "ready":ready,"artifacts":arts,
+                     "mirrored_at_utc":datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")},
+                    open("manifest.json","w"), indent=2, ensure_ascii=False)
+          PY
+          put SHA256SUMS.txt "s3://$R2_BUCKET/$PREFIX/latest/checksums" --content-type "text/plain; charset=utf-8"
+          put manifest.json  "s3://$R2_BUCKET/$PREFIX/latest/manifest"  --content-type "application/json; charset=utf-8"
+          # latest.json 版本清单(对齐 qopad 版本约定，展示/未来版本回退用)
+          printf '{"version":"%s","codex_version":"%s","mirrored_at":"%s"}\n' "$V" "$CODEX_VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > latest.json
+          put latest.json "s3://$R2_BUCKET/$PREFIX/latest.json" --content-type "application/json; charset=utf-8" --cache-control 'public, max-age=300'
+          # ③ latest 短链最后传(qopad 消费)；win-x64 就绪时顺带更新 win 别名
+          for k in "${READY[@]}"; do
+            put "${FILE[$k]}" "s3://$R2_BUCKET/$PREFIX/latest/${SHORT[$k]}" --content-type "${CT[$k]}" --content-disposition "attachment; filename=\"${DLNAME[$k]}\""
+          done
+          if [ -f Codex-Windows-x64.msix ]; then
+            put Codex-Windows-x64.msix "s3://$R2_BUCKET/$PREFIX/latest/win" --content-type application/msix --content-disposition 'attachment; filename="Codex-Windows-x64.msix"'
+          fi
+          echo "Codex 上传完成 win_ver=$V ready=${READY[*]}"
+
+      # ⑤ 回写仓库 codex-manifest.json(signature 作 compare 基准) + prune + robust push。
+      - name: Record + prune + push
+        if: always() && steps.probe.outputs.win_ver != ''
+        env:
+          V: ${{ steps.probe.outputs.win_ver }}
+          CHANGED: ${{ steps.probe.outputs.changed }}
+        run: |
+          set -e
+          python3 - <<'PY'
+          import json, os, re
+          mp=os.environ["MANIFEST"]; keep=int(os.environ["KEEP_ARCHIVE"])
+          cur=json.load(open(mp)) if os.path.exists(mp) else {}
+          done=set(cur.get("mirrored",[]))
+          if os.environ.get("CHANGED")=="true": done.add(os.environ["V"])
+          json.dump({"tool":"codex-desktop","win_ver":os.environ["V"],
+                     "signature":os.environ.get("CODEX_SIGNATURE", cur.get("signature","")),
+                     "mirrored":sorted(done, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]},
+                    open(mp,"w"), indent=2, ensure_ascii=False)
+          PY
+          if [ "$CHANGED" = "true" ]; then
+            vers=$(aws s3 ls "s3://$R2_BUCKET/$PREFIX/archive/" --endpoint-url "$R2_ENDPOINT" 2>/dev/null | awk '/PRE/{gsub(/\/$/,"",$2);print $2}' | grep -E '^[0-9]+\.' | sort -V || true)
+            total=$(printf '%s\n' "$vers" | grep -c . || true); drop=$(( total - KEEP_ARCHIVE ))
+            if [ "$drop" -gt 0 ]; then
+              printf '%s\n' "$vers" | head -n "$drop" | while read -r v; do
+                [ -n "$v" ] && echo "删除旧版本 $PREFIX/archive/$v/" && aws s3 rm "s3://$R2_BUCKET/$PREFIX/archive/$v/" --recursive --endpoint-url "$R2_ENDPOINT"
+              done
+            fi
+          fi
+          git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$MANIFEST"
+          if git diff --cached --quiet; then echo "codex manifest 无变化，跳过提交"; else
+            git commit -m "chore: mirror codex-desktop -> $V"
+            for i in 1 2 3 4 5; do
+              git push origin "HEAD:${{ github.ref_name }}" && { echo pushed; break; }
+              echo "push 被拒(第 $i 次)，fetch+rebase 重试"; git fetch origin "${{ github.ref_name }}"
+              git rebase "origin/${{ github.ref_name }}" || { git rebase --abort; exit 1; }
+              [ "$i" -lt 5 ] && sleep $((i*2))
+            done
+          fi
+
+      # ⑥ Keepalive(防 GitHub 60 天自动停用；本文件末 job，专属文件名)
+      - name: Keepalive
         if: always()
         run: |
           set -e
-          LAST=$(git log -1 --format=%ct 2>/dev/null || echo 0); NOW=$(date +%s)
-          AGE=$(( (NOW - LAST) / 86400 )); echo "距上次 commit ${AGE} 天"
+          LAST=$(git log -1 --format=%ct 2>/dev/null || echo 0); NOW=$(date +%s); AGE=$(( (NOW - LAST) / 86400 ))
+          echo "距上次 commit ${AGE} 天"
           if [ "$AGE" -ge 25 ]; then
             mkdir -p .github; date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-run.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/last-run.txt; git commit -m "chore: keepalive $(date -u +%F)"
-            git push origin "HEAD:${{ github.ref_name }}"; echo "已提交心跳保活"
+            git push origin "HEAD:${{ github.ref_name }}" || true
           else echo "无需保活(${AGE} < 25 天)"; fi

@@ -344,14 +344,30 @@ jobs:
           if os.path.exists("out/installer.json"): m.update(json.load(open("out/installer.json")))
           if os.environ.get("CC_LATEST"): m["claude_code_latest"]=os.environ["CC_LATEST"]
           if os.environ.get("CC_PIN"):    m["cd_cc_pin"]=os.environ["CC_PIN"]
+          
+          # 记录并保护所有历史 pin（防旧版 CD 启动 cc 404）
+          pins_hist = set(m.get("cd_cc_pins_history", []))
+          if os.environ.get("CC_PIN"):
+              pins_hist.add(os.environ["CC_PIN"])
+          m["cd_cc_pins_history"] = sorted(list(pins_hist), key=lambda v:[int(x) for x in re.findall(r'\d+',v)])
+
           keep=int(os.environ["CC_KEEP_ARCHIVE"])
           mir=set(m.get("claude_code_mirrored",[])) | {v for v in os.environ.get("CC_MIRRORED","").split(",") if v}
           if os.environ.get("CC_PIN"): mir.add(os.environ["CC_PIN"])
-          if mir: m["claude_code_mirrored"]=sorted(mir, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]
+          
+          # 必须包含历史所有的 CD pin，同时再保留最近 N 版
+          recent_mir = sorted(mir, key=lambda v:[int(x) for x in re.findall(r'\d+',v)])[-keep:]
+          mir_final = set(recent_mir) | pins_hist
+          m["claude_code_mirrored"]=sorted(list(mir_final), key=lambda v:[int(x) for x in re.findall(r'\d+',v)])
+          
           json.dump(m, open(mp,"w"), indent=2, ensure_ascii=False)
+          
+          # 输出保护的历史 pin，供 prune R2 使用
+          with open("/tmp/cc-protect.txt", "w") as f:
+              f.write(" ".join(pins_hist))
           PY
-          # 3) prune R2(installer archive + claude-code 各留最近 N；CD pin 那版用 -keep 列表保护)
-          PROTECT="${CC_PIN}"
+          # 3) prune R2(installer archive + claude-code 各留最近 N；所有历史 CD pin 强制保护)
+          PROTECT_PINS=$(cat /tmp/cc-protect.txt 2>/dev/null || echo "${CC_PIN}")
           prune(){
             local vers total drop
             vers=$(aws s3 ls "s3://$R2_BUCKET/$1" --endpoint-url "$R2_ENDPOINT" 2>/dev/null | awk '/PRE/{gsub(/\/$/,"",$2);print $2}' | grep -E '^[0-9]+\.' | sort -V || true)
@@ -359,12 +375,24 @@ jobs:
             [ "$drop" -le 0 ] && return 0
             printf '%s\n' "$vers" | head -n "$drop" | while read -r v; do
               [ -z "$v" ] && continue
-              [ -n "$4" ] && [ "$v" = "$4" ] && { echo "保护 CD pin $v"; continue; }
+              if [ -n "$4" ]; then
+                local is_protected=""
+                for p in $4; do
+                  if [ "$v" = "$p" ]; then
+                    is_protected=1
+                    break
+                  fi
+                done
+                if [ -n "$is_protected" ]; then
+                  echo "保护历史 CD pin $v"
+                  continue
+                fi
+              fi
               echo "删除旧版本 $3$v/" && aws s3 rm "s3://$R2_BUCKET/$3$v/" --recursive --endpoint-url "$R2_ENDPOINT"
             done
           }
           prune "$PREFIX/archive/" "$INST_KEEP"      "$PREFIX/archive/" ""
-          prune "$CC_PREFIX/"      "$CC_KEEP_ARCHIVE" "$CC_PREFIX/"     "$PROTECT"
+          prune "$CC_PREFIX/"      "$CC_KEEP_ARCHIVE" "$CC_PREFIX/"     "$PROTECT_PINS"
           # 4) 单次 commit + robust push
           git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "$MANIFEST"

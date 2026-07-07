@@ -1,8 +1,9 @@
 {
   "tool": "codex-desktop",
-  "win_ver": "26.623.13972.0",
-  "signature": "26.623.13972.0|0x8DED8A422A7C225|0x8DED8A48DCE6635",
+  "win_ver": "26.623.19656.0",
+  "signature": "26.623.19656.0|0x8DEDBBDC2BC816D|0x8DEDBBDF9860C61",
   "mirrored": [
-    "26.623.13972.0"
+    "26.623.13972.0",
+    "26.623.19656.0"
   ]
 }

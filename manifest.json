@@ -14,8 +14,8 @@
   "claude_code_latest": "2.1.205",
   "claude_code_mirrored": [
     "2.1.202",
-    "2.1.204",
-    "2.1.205"
+    "2.1.205",
+    "2.1.206"
   ],
   "installer_kind": "msix",
   "cd_cc_pin": "2.1.202",

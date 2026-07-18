@@ -11,13 +11,13 @@
   "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.22209.0/Claude-77c938bac27689d6df971289c10759e512785c73.msix",
   "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.22209.0/Claude-77c938bac27689d6df971289c10759e512785c73.dmg",
   "mirrored_at_utc": "2026-07-17T07:36:32Z",
-  "claude_code_latest": "2.1.212",
+  "claude_code_latest": "2.1.214",
   "claude_code_mirrored": [
     "2.1.202",
     "2.1.205",
     "2.1.209",
-    "2.1.211",
-    "2.1.212"
+    "2.1.213",
+    "2.1.214"
   ],
   "installer_kind": "msix",
   "cd_cc_pin": "2.1.209",

@@ -1,33 +1,34 @@
 {
   "tool": "claude-desktop",
-  "win_ver": "1.22209.0",
-  "mac_ver": "1.22209.0",
+  "win_ver": "1.22209.3",
+  "mac_ver": "1.22209.3",
   "win_file": "Claude-win-x64.msix",
   "mac_file": "Claude-mac.dmg",
-  "win_sha256": "780ceb8780136a213d021aff3ca385b5aa5b31e6d974b4ceaa86b9cc0afc74ff",
-  "mac_sha256": "0efa50ef55e89ab8c42f17b153957bf8580ff6b3c4f0f0104005651dffeba6b3",
-  "win_size": 258081196,
-  "mac_size": 333223077,
-  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.22209.0/Claude-77c938bac27689d6df971289c10759e512785c73.msix",
-  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.22209.0/Claude-77c938bac27689d6df971289c10759e512785c73.dmg",
-  "mirrored_at_utc": "2026-07-17T07:36:32Z",
-  "claude_code_latest": "2.1.214",
+  "win_sha256": "8fbe26fea90c5077de6bfe4848748ff7ca7646475a713b6b997acf14d5a64dcd",
+  "mac_sha256": "fe4b917de95ba476cbf5af6e70e97fcd2d035f845fe3885b5c6a9d1b65195913",
+  "win_size": 258078371,
+  "mac_size": 333485293,
+  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.22209.3/Claude-babe11577dfefe3e209c06bd674628d862f0dbae.msix",
+  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.22209.3/Claude-babe11577dfefe3e209c06bd674628d862f0dbae.dmg",
+  "mirrored_at_utc": "2026-07-19T07:57:03Z",
+  "claude_code_latest": "2.1.215",
   "claude_code_mirrored": [
     "2.1.202",
     "2.1.205",
     "2.1.209",
-    "2.1.213",
-    "2.1.214"
+    "2.1.214",
+    "2.1.215"
   ],
   "installer_kind": "msix",
-  "cd_cc_pin": "2.1.209",
-  "win_arm64_ver": "1.22209.0",
+  "cd_cc_pin": "2.1.215",
+  "win_arm64_ver": "1.22209.3",
   "win_arm64_file": "Claude-win-arm64.msix",
-  "win_arm64_sha256": "0050da16d080ffa73a63dfee9de1fa5240f6668d7e82e37ea430dac2b23a034f",
-  "win_arm64_size": 253980958,
+  "win_arm64_sha256": "ecbeee08e8c56b0b744d1bc472684126a27135900bfa29301b8a4eb3c14eb6e9",
+  "win_arm64_size": 253984722,
   "cd_cc_pins_history": [
     "2.1.202",
     "2.1.205",
-    "2.1.209"
+    "2.1.209",
+    "2.1.215"
   ]
 }

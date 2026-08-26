@@ -1,17 +1,17 @@
 {
   "tool": "claude-desktop",
-  "win_ver": "1.34493.1",
-  "mac_ver": "1.34493.1",
+  "win_ver": "1.37937.0",
+  "mac_ver": "1.37937.0",
   "win_file": "Claude-win-x64.msix",
   "mac_file": "Claude-mac.dmg",
-  "win_sha256": "ad5ead595fec1977c0ccb1d7fab3be040773b716451431dbd6bab457ba31a55c",
-  "mac_sha256": "2a8f87f52e6988b93acf792e0add47c4aae47fa94ef1dfaf63b10fdef84050ce",
-  "win_size": 247405438,
-  "mac_size": 339650584,
-  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.34493.1/Claude-255293a41a25d54c5177aa9614fb4cd620e70b78.msix",
-  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.34493.1/Claude-255293a41a25d54c5177aa9614fb4cd620e70b78.dmg",
-  "mirrored_at_utc": "2026-08-21T13:13:24Z",
-  "claude_code_latest": "2.1.245",
+  "win_sha256": "1f5ffd8d124c162a53e7900a93ab6328140e5373f66534b6424f764a3a66c393",
+  "mac_sha256": "54a4ad4fc3d62d0a93cfebf15f3ee39e0ea24bccca58bf945033afb5cb102844",
+  "win_size": 261056753,
+  "mac_size": 350007413,
+  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.37937.0/Claude-61bfd4a196b91157d34e0f049cdf6df69a1a9fee.msix",
+  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.37937.0/Claude-61bfd4a196b91157d34e0f049cdf6df69a1a9fee.dmg",
+  "mirrored_at_utc": "2026-08-26T02:00:39Z",
+  "claude_code_latest": "2.1.246",
   "claude_code_mirrored": [
     "2.1.202",
     "2.1.205",
@@ -26,15 +26,16 @@
     "2.1.234",
     "2.1.235",
     "2.1.237",
-    "2.1.243",
-    "2.1.245"
+    "2.1.241",
+    "2.1.245",
+    "2.1.246"
   ],
   "installer_kind": "msix",
-  "cd_cc_pin": "2.1.237",
-  "win_arm64_ver": "1.34493.1",
+  "cd_cc_pin": "2.1.241",
+  "win_arm64_ver": "1.37937.0",
   "win_arm64_file": "Claude-win-arm64.msix",
-  "win_arm64_sha256": "3f5ecced9682cf1bca9226dcf4275c9747494b0de7971812a9b1ccf57d7f9395",
-  "win_arm64_size": 246421420,
+  "win_arm64_sha256": "ff141331d08936c58d4d98f4c15251264d939a68ddb8b056c1051ecc834c4401",
+  "win_arm64_size": 256034106,
   "cd_cc_pins_history": [
     "2.1.202",
     "2.1.205",
@@ -48,6 +49,7 @@
     "2.1.229",
     "2.1.234",
     "2.1.235",
-    "2.1.237"
+    "2.1.237",
+    "2.1.241"
   ]
 }

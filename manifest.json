@@ -1,17 +1,17 @@
 {
   "tool": "claude-desktop",
-  "win_ver": "1.49585.0",
-  "mac_ver": "1.49585.0",
+  "win_ver": "1.52386.0",
+  "mac_ver": "1.52386.0",
   "win_file": "Claude-win-x64.msix",
   "mac_file": "Claude-mac.dmg",
-  "win_sha256": "dfc789cb60a88a5ba794c25903ebfc0f4552c650a157933b056c984366dbedca",
-  "mac_sha256": "df2cbeed966eb86dc60972be42fb85fde9c9c03d197fc0f56f0db479e6e95eea",
-  "win_size": 277248271,
-  "mac_size": 366928263,
-  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.49585.0/Claude-41ad1dff5275eedc8af25989f59f33c5efe14063.msix",
-  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.49585.0/Claude-41ad1dff5275eedc8af25989f59f33c5efe14063.dmg",
-  "mirrored_at_utc": "2026-09-09T04:48:40Z",
-  "claude_code_latest": "2.1.267",
+  "win_sha256": "80105543d3c5914792f31741f7cd10fc8c342ee59c0c3f505d824cd25fe9e3ba",
+  "mac_sha256": "df990dcdb4ae87fa0841d3cd013d6f91e533061da30b1ef095eb5699ad98ea10",
+  "win_size": 282685784,
+  "mac_size": 369002626,
+  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/1.52386.0/Claude-1003ca8d443708006c167ffbd0f9695343643af1.msix",
+  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/1.52386.0/Claude-1003ca8d443708006c167ffbd0f9695343643af1.dmg",
+  "mirrored_at_utc": "2026-09-11T04:46:48Z",
+  "claude_code_latest": "2.1.268",
   "claude_code_mirrored": [
     "2.1.202",
     "2.1.205",
@@ -33,14 +33,15 @@
     "2.1.258",
     "2.1.260",
     "2.1.266",
-    "2.1.267"
+    "2.1.267",
+    "2.1.268"
   ],
   "installer_kind": "msix",
-  "cd_cc_pin": "2.1.260",
-  "win_arm64_ver": "1.49585.0",
+  "cd_cc_pin": "2.1.266",
+  "win_arm64_ver": "1.52386.0",
   "win_arm64_file": "Claude-win-arm64.msix",
-  "win_arm64_sha256": "1499afabcb9fb316eb662ae6b675e7a0e98edd0db969e6a0e2c5cc0292574cc5",
-  "win_arm64_size": 271204913,
+  "win_arm64_sha256": "c8a9b70cab320c15a8a3e1f99279dca35c45937ed4ab32962cb4672081cf8c43",
+  "win_arm64_size": 276326213,
   "cd_cc_pins_history": [
     "2.1.202",
     "2.1.205",
@@ -60,6 +61,7 @@
     "2.1.247",
     "2.1.255",
     "2.1.258",
-    "2.1.260"
+    "2.1.260",
+    "2.1.266"
   ]
 }

@@ -1,16 +1,16 @@
 {
   "tool": "claude-desktop",
-  "win_ver": "2.2553.0",
-  "mac_ver": "2.2553.0",
+  "win_ver": "2.2553.1",
+  "mac_ver": "2.2553.1",
   "win_file": "Claude-win-x64.msix",
   "mac_file": "Claude-mac.dmg",
-  "win_sha256": "9d3d1843ac7e537cf568e2f1b090d3c3584942ed505b79f2f9401358c5d0edd4",
-  "mac_sha256": "99bd0b491de9696097778bd0979cda77648972e363d4f034589aeb7b1f3ef457",
-  "win_size": 284803588,
-  "mac_size": 370779081,
-  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.2553.0/Claude-177545b3e41a412735a8537afb925bb9ce9db6d3.msix",
-  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.2553.0/Claude-177545b3e41a412735a8537afb925bb9ce9db6d3.dmg",
-  "mirrored_at_utc": "2026-09-18T04:50:11Z",
+  "win_sha256": "fb2b8b470ef95d12afbcdcc1e0491599404a86f08e5fc460796f833827b7a447",
+  "mac_sha256": "2882bb7efe47d7c43e0a809db8429d976b970f5a135aac47c90a4f8c7eef0006",
+  "win_size": 284800095,
+  "mac_size": 370826764,
+  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.2553.1/Claude-c38127e27202ddc1c8c187102f7798a93b1b8ede.msix",
+  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.2553.1/Claude-c38127e27202ddc1c8c187102f7798a93b1b8ede.dmg",
+  "mirrored_at_utc": "2026-09-18T16:29:01Z",
   "claude_code_latest": "2.1.276",
   "claude_code_mirrored": [
     "2.1.202",
@@ -37,14 +37,15 @@
     "2.1.271",
     "2.1.274",
     "2.1.275",
-    "2.1.276"
+    "2.1.276",
+    "2.1.277"
   ],
   "installer_kind": "msix",
-  "cd_cc_pin": "2.1.274",
-  "win_arm64_ver": "2.2553.0",
+  "cd_cc_pin": "2.1.275",
+  "win_arm64_ver": "2.2553.1",
   "win_arm64_file": "Claude-win-arm64.msix",
-  "win_arm64_sha256": "8f7f1cbc3440c5610172eefffdfecbe27bbb3ef7b9b2292879b30d4a87ba25bf",
-  "win_arm64_size": 278510303,
+  "win_arm64_sha256": "d6e709c6e5746e2a36ccca0382d5b990087b76dd4bcaeca479d43cdd5228fb90",
+  "win_arm64_size": 278507390,
   "cd_cc_pins_history": [
     "2.1.202",
     "2.1.205",
@@ -68,6 +69,7 @@
     "2.1.266",
     "2.1.270",
     "2.1.271",
-    "2.1.274"
+    "2.1.274",
+    "2.1.275"
   ]
 }

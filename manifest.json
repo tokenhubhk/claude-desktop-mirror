@@ -11,7 +11,7 @@
   "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.7032.0/Claude-6c468ab6ed862a68c9555cce34f11186c35f526d.msix",
   "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.7032.0/Claude-6c468ab6ed862a68c9555cce34f11186c35f526d.dmg",
   "mirrored_at_utc": "2026-09-23T04:50:18Z",
-  "claude_code_latest": "2.1.280",
+  "claude_code_latest": "2.1.281",
   "claude_code_mirrored": [
     "2.1.202",
     "2.1.205",

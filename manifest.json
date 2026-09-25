@@ -1,17 +1,17 @@
 {
   "tool": "claude-desktop",
-  "win_ver": "2.7032.0",
-  "mac_ver": "2.7032.0",
+  "win_ver": "2.9939.2",
+  "mac_ver": "2.9939.2",
   "win_file": "Claude-win-x64.msix",
   "mac_file": "Claude-mac.dmg",
-  "win_sha256": "f11b7d5dc5c969f19248cf598f23d35c552311a0ed703e106542c057c4016827",
-  "mac_sha256": "32c25f2e4ae17f97e3996f95f07a9494a90ceab52311e3eec3cf438f7e748f0d",
-  "win_size": 287766830,
-  "mac_size": 373393800,
-  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.7032.0/Claude-6c468ab6ed862a68c9555cce34f11186c35f526d.msix",
-  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.7032.0/Claude-6c468ab6ed862a68c9555cce34f11186c35f526d.dmg",
-  "mirrored_at_utc": "2026-09-23T04:50:18Z",
-  "claude_code_latest": "2.1.281",
+  "win_sha256": "4f2ea2a047c63bcfbe4d93ca9dcd1b832405bf177e86bf7f858b75974aeb85a4",
+  "mac_sha256": "db9d09eda0131576960e5d5a4569335dc700664b8ffde534ef541cc8635aa587",
+  "win_size": 289376204,
+  "mac_size": 374386569,
+  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.9939.2/Claude-d3e50475d5d6bb0c317560310200249dd61b87d8.msix",
+  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.9939.2/Claude-d3e50475d5d6bb0c317560310200249dd61b87d8.dmg",
+  "mirrored_at_utc": "2026-09-25T05:03:02Z",
+  "claude_code_latest": "2.1.282",
   "claude_code_mirrored": [
     "2.1.202",
     "2.1.205",
@@ -42,11 +42,11 @@
     "2.1.282"
   ],
   "installer_kind": "msix",
-  "cd_cc_pin": "2.1.280",
-  "win_arm64_ver": "2.7032.0",
+  "cd_cc_pin": "2.1.281",
+  "win_arm64_ver": "2.9939.2",
   "win_arm64_file": "Claude-win-arm64.msix",
-  "win_arm64_sha256": "0ca30c5e4d0d58a05090c3b0f417bd53b22990863a7cd383bc99c06cf951c3f1",
-  "win_arm64_size": 281326865,
+  "win_arm64_sha256": "2d502b3b443e42141ceaf737d6d9a3d32ae744b4d4aac6db866e113ad2d3b2b1",
+  "win_arm64_size": 282868950,
   "cd_cc_pins_history": [
     "2.1.202",
     "2.1.205",
@@ -72,6 +72,7 @@
     "2.1.271",
     "2.1.274",
     "2.1.275",
-    "2.1.280"
+    "2.1.280",
+    "2.1.281"
   ]
 }

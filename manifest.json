@@ -1,16 +1,16 @@
 {
   "tool": "claude-desktop",
-  "win_ver": "2.16120.0",
-  "mac_ver": "2.16120.0",
+  "win_ver": "2.19675.0",
+  "mac_ver": "2.19675.0",
   "win_file": "Claude-win-x64.msix",
   "mac_file": "Claude-mac.dmg",
-  "win_sha256": "23dec2d67a8e814a51c5b9336ac3faf25c2a213acfe351ff2d6f4ec1741a4794",
-  "mac_sha256": "4def3b7a86795b3b8b925bf6294e50838672bebc2a7a668c5b3cb5fa17da821b",
-  "win_size": 290917874,
-  "mac_size": 376306417,
-  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.16120.0/Claude-801c07c2fc988dc8ae50cfadd67d4908a4f5cf37.msix",
-  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.16120.0/Claude-801c07c2fc988dc8ae50cfadd67d4908a4f5cf37.dmg",
-  "mirrored_at_utc": "2026-09-30T05:38:53Z",
+  "win_sha256": "8355c3d28aa08d2e8d841596b41abce0a4fc3805cc9d74f6836d42176ab6b0f9",
+  "mac_sha256": "c0e6e512c5913e20567cdbfad33f8622e69ab39a2a9886bf2a752b2ab06455cb",
+  "win_size": 291543056,
+  "mac_size": 377037896,
+  "win_upstream": "https://downloads.claude.ai/releases/win32/x64/2.19675.0/Claude-5706e5524dba58b23e105c31c358df8ab0a95852.msix",
+  "mac_upstream": "https://downloads.claude.ai/releases/darwin/universal/2.19675.0/Claude-5706e5524dba58b23e105c31c358df8ab0a95852.dmg",
+  "mirrored_at_utc": "2026-10-02T05:46:23Z",
   "claude_code_latest": "2.1.287",
   "claude_code_mirrored": [
     "2.1.202",
@@ -44,11 +44,11 @@
     "2.1.287"
   ],
   "installer_kind": "msix",
-  "cd_cc_pin": "2.1.284",
-  "win_arm64_ver": "2.16120.0",
+  "cd_cc_pin": "2.1.286",
+  "win_arm64_ver": "2.19675.0",
   "win_arm64_file": "Claude-win-arm64.msix",
-  "win_arm64_sha256": "d5eff27786f92de979a4a1cdc21289263567f3b17b4de6883fff4987e613d3a4",
-  "win_arm64_size": 284342833,
+  "win_arm64_sha256": "3e98e23f1cb3c93db440a360846059c6c55e1771368fa376e6547f20a9f23221",
+  "win_arm64_size": 284885979,
   "cd_cc_pins_history": [
     "2.1.202",
     "2.1.205",
@@ -76,6 +76,7 @@
     "2.1.275",
     "2.1.280",
     "2.1.281",
-    "2.1.284"
+    "2.1.284",
+    "2.1.286"
   ]
 }
